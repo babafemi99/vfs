@@ -78,7 +78,7 @@ scripts/demo-webhook-attack.sh
 - All five show up in *Webhooks* (left). Click one to open the inspector: headers, body, outcome.
 - The first one names an order nobody has. It's stored and flagged as "event for an unknown order" in the logs, not an error.
 
-**Say:** "The signature covers the timestamp, a nonce and the body, compared in constant time. The timestamp limits a replay to 5 minutes, and the nonce cache blocks the replay even inside those 5 minutes. A real retry from the broker uses a new nonce, so it still gets through."
+**Say:** "The signature covers the timestamp, a nonce and the body, compared in constant time. The timestamp limits a replay to 2 minutes, and the nonce cache blocks the replay even inside those 2 minutes. A real retry from the broker uses a new nonce, so it still gets through."
 
 ## 6. Retries can't charge twice (1 min)
 

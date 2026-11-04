@@ -46,7 +46,7 @@ func (rc *receiver) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ts, _ := strconv.ParseInt(r.Header.Get(webhook.HeaderTimestamp), 10, 64)
-	if err := webhook.Verify(rc.secret, ts, r.Header.Get(webhook.HeaderNonce), body, r.Header.Get(webhook.HeaderSignature), 5*time.Minute); err != nil {
+	if err := webhook.Verify(rc.secret, ts, r.Header.Get(webhook.HeaderNonce), body, r.Header.Get(webhook.HeaderSignature), 2*time.Minute); err != nil {
 		fmt.Printf("REJECTED %s: %v\n", r.Header.Get(webhook.HeaderEventID), err)
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return

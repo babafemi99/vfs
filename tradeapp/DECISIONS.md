@@ -196,7 +196,7 @@ Validation, ID generation (prefixed ULIDs from `pkg/lid`) and orchestration:
 ## Webhooks in → inbox → processor (phase 3)
 - **Endpoint:** `POST /webhooks/provider` (no `Idempotency-Key`; the event id dedupes).
   1. Reads the raw body (1 MB max).
-  2. Checks `X-Sim-Signature` = hex(HMAC-SHA512(secret, `ts + "." + body`)) with a constant-time compare. `X-Sim-Timestamp` must be within `WEBHOOK_TOLERANCE` (5m) of now, in either direction. Anything else → `401`, and nothing is stored.
+  2. Checks `X-Sim-Signature` = hex(HMAC-SHA512(secret, `ts + "." + body`)) with a constant-time compare. `X-Sim-Timestamp` must be within `WEBHOOK_TOLERANCE` (2m) of now, in either direction. Anything else → `401`, and nothing is stored.
   3. Stores the event in `provider_events` and queues a `process_event` job, in one transaction. A duplicate event id → `200`, and nothing new is queued.
   4. Answers `200` straight away; processing happens in the worker. A valid signature on an unparseable body → `400`.
 - **The `process_event` job:** applies one event to its order in one transaction, then marks the event processed.
@@ -392,12 +392,12 @@ Validation, ID generation (prefixed ULIDs from `pkg/lid`) and orchestration:
 
 ## Webhook security: signature, timestamp, nonce, replay
 - **Every webhook must pass, in order:**
-  1. **Timestamp** within ±`WEBHOOK_TOLERANCE` (5m) of now. Otherwise `401`.
+  1. **Timestamp** within ±`WEBHOOK_TOLERANCE` (2m) of now. Otherwise `401`.
   2. **Nonce** present and at most 64 characters. Otherwise `401`.
   3. **Signature:** `hex(HMAC-SHA512(secret, "<ts>.<nonce>.<body>"))`, compared in constant time. Otherwise `401`.
   4. **Replay check:** the nonce is inserted into `webhook_nonces`. If it's already there, the request is a replay → `409 replay_detected`, and nothing is stored or processed.
   5. **Event id dedupe** (the inbox): an already-received event id → `200`, ignored.
-- **Why both a nonce and the event id:** the nonce stops an attacker re-sending a captured request within the 5-minute window. The event id stops the provider's own legitimate retries (each with a new nonce) from being applied twice. Between them, a request can neither be replayed nor applied twice.
+- **Why both a nonce and the event id:** the nonce stops an attacker re-sending a captured request within the 2-minute window. The event id stops the provider's own legitimate retries (each with a new nonce) from being applied twice. Between them, a request can neither be replayed nor applied twice.
 - **Nonce cleanup:** nonces are kept for twice the tolerance, then deleted (`RunKeyCleanup`). Anything older is already refused by the timestamp check.
 - **Status codes:** a refused request never reaches the inbox. `401` means "not from the provider"; `409` means "the same request again".
 
@@ -515,3 +515,10 @@ Validation, ID generation (prefixed ULIDs from `pkg/lid`) and orchestration:
   - vmalert evaluates `deploy/vmalert/alerts.yml` and writes alert state back as `ALERTS` series (queryable, and restored after a restart). With no Alertmanager here, notifications go to a blackhole; in production, `-notifier.url` would point at Alertmanager.
 - **No Grafana:** it was there at first, then removed to keep the stack small. VictoriaLogs, VictoriaMetrics and vmalert each have their own web UI, and nothing in the app depends on a dashboard tool. vmalert, not Grafana, owns alerting, so alerts don't depend on the dashboard tool either. Adding Grafana back is two data sources pointing at the same stores.
 - **Versions:** every image is pinned to a release at least two weeks old. Every host port can be overridden (`WEB_PORT`, `API_PORT`, …), with a web default (8088) that avoids the common 8080.
+
+## Webhook timestamp window: 2 minutes
+- **The change:** `WEBHOOK_TOLERANCE` went from 5 minutes to **2 minutes**. A captured webhook is useless after that, even before the nonce check, and the nonce cache blocks a replay inside the window.
+- **Why not shorter:** the window also has to absorb clock skew between the broker's servers and ours, plus network delay. (60 seconds was tried; 2 minutes leaves more room for a drifting clock while staying short for an attacker.)
+- **Retries still pass:** brokersim signs every delivery attempt with a fresh timestamp and nonce, so a retry 10 minutes later is a new, valid request, not a stale one.
+- **What breaks it:** a clock more than 2 minutes off on either side refuses every webhook (`rejected_timestamp`). The `WebhookSignatureFailures` alert fires, and the sweeper keeps orders moving by polling until the clocks are fixed.
+- **Nonce retention follows:** nonces are kept for twice the window (4 minutes); anything older is refused by the timestamp anyway.

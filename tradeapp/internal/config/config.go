@@ -89,7 +89,7 @@ func Load() (Config, error) {
 		JobLagAlert:      duration("JOB_LAG_ALERT", "5m"),
 
 		WebhookSecret:    env("PROVIDER_WEBHOOK_SECRET", "whsec_test"),
-		WebhookTolerance: duration("WEBHOOK_TOLERANCE", "5m"),
+		WebhookTolerance: duration("WEBHOOK_TOLERANCE", "2m"),
 		SweepInterval:    duration("SWEEP_INTERVAL", "15s"),
 		StuckAfter:       duration("STUCK_AFTER", "30s"),
 		ReconInterval:    duration("RECON_INTERVAL", "5m"),

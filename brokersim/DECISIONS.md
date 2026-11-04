@@ -79,3 +79,6 @@ Choices made where `lab/docs/broker.md` was ambiguous, or where we cut scope.
 - `SIM_SEED=0` picks a random seed at startup. The default stays 42, so tests and local runs are reproducible.
 - `brokersim healthcheck` exits 0 when `/dev/engine` answers. The image is distroless, with no curl for a healthcheck.
 - Logs are JSON with `service=brokersim`, ready for the log pipeline.
+
+## Signing with a fresh timestamp per attempt
+Each delivery attempt is signed with the current time and a new nonce. The receiver's timestamp window (2 minutes in tradeapp) therefore applies to each attempt, not to when the event happened, so retries hours later still verify. The dev receiver (`cmd/receiver`) uses the same 2 minutes.

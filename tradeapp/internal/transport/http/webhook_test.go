@@ -76,8 +76,18 @@ func TestWebhookSignature(t *testing.T) {
 	if s := e.postWebhook(t, body, webhookSecret, now.Add(-10*time.Minute)); s != 401 {
 		t.Errorf("old timestamp: %d", s)
 	}
+	// The window is ±2m: 150s either way is refused, 90s old is fine.
+	if s := e.postWebhook(t, body, webhookSecret, now.Add(-150*time.Second)); s != 401 {
+		t.Errorf("150s old: %d, want 401", s)
+	}
+	if s := e.postWebhook(t, body, webhookSecret, now.Add(150*time.Second)); s != 401 {
+		t.Errorf("150s in the future: %d, want 401", s)
+	}
 	if n := e.eventCount(t); n != 0 {
 		t.Fatalf("rejected webhooks were stored: %d", n)
+	}
+	if s := e.postWebhook(t, body, webhookSecret, now.Add(-90*time.Second)); s != 200 {
+		t.Fatalf("90s old (inside the window): %d, want 200", s)
 	}
 
 	if s := e.postWebhook(t, body, webhookSecret, now); s != 200 {

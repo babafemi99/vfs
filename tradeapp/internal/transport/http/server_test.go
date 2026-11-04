@@ -43,7 +43,7 @@ func setup(t *testing.T) env {
 
 func setupWithConfig(t *testing.T, cfg service.Config) env {
 	t.Helper()
-	return newEnv(t, cfg, config.Config{WebhookSecret: webhookSecret, WebhookTolerance: 5 * time.Minute})
+	return newEnv(t, cfg, config.Config{WebhookSecret: webhookSecret, WebhookTolerance: 2 * time.Minute})
 }
 
 // newEnv builds the dependencies the way sys.NewDependencies does, but on a
