@@ -1,0 +1,8 @@
+# Only the Go sources are needed to build the image.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!pkg/
+**/*_test.go

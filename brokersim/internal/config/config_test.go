@@ -37,3 +37,20 @@ func TestOverridesAndErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestContainerSettings(t *testing.T) {
+	c, err := LoadFrom(env(nil))
+	if err != nil || !c.AutoResolveCancels || len(c.DevTrustedNets) != 0 {
+		t.Fatalf("defaults: %+v %v", c, err)
+	}
+	c, err = LoadFrom(env(map[string]string{
+		"SIM_AUTO_RESOLVE_CANCELS": "false",
+		"SIM_DEV_TRUSTED_CIDRS":    " 172.28.0.0/16 , 10.1.0.0/24",
+	}))
+	if err != nil || c.AutoResolveCancels || len(c.DevTrustedNets) != 2 || c.DevTrustedNets[0].String() != "172.28.0.0/16" {
+		t.Fatalf("overrides: %+v %v", c, err)
+	}
+	if _, err := LoadFrom(env(map[string]string{"SIM_DEV_TRUSTED_CIDRS": "not-a-cidr"})); err == nil {
+		t.Fatal("a bad CIDR should fail")
+	}
+}

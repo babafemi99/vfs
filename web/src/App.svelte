@@ -2,6 +2,12 @@
   import { Toaster } from 'svelte-sonner'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Badge } from '$lib/components/ui/badge/index.js'
+  import Wallet from '@lucide/svelte/icons/wallet'
+  import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right'
+  import List from '@lucide/svelte/icons/list'
+  import WebhookIcon from '@lucide/svelte/icons/webhook'
+  import Activity from '@lucide/svelte/icons/activity'
+  import ExternalLink from '@lucide/svelte/icons/external-link'
   import { route } from './lib/router.svelte.js'
   import { live, connect, onActivity } from './lib/live.svelte.js'
   import { toast } from './lib/toast.js'
@@ -27,16 +33,36 @@
   })
 
   const tabs = [
-    ['portfolio', '#/', 'Portfolio'],
-    ['trade', '#/trade', 'Trade'],
-    ['orders', '#/orders', 'Orders'],
-    ['webhooks', '#/webhooks', 'Webhooks'],
-    ['ops', '#/ops', 'Operations'],
+    ['portfolio', '#/', 'Portfolio', Wallet],
+    ['trade', '#/trade', 'Trade', ArrowLeftRight],
+    ['orders', '#/orders', 'Orders', List],
+    ['webhooks', '#/webhooks', 'Webhooks', WebhookIcon],
+    ['ops', '#/ops', 'Operations', Activity],
   ]
+  const features = ['Signed webhooks', 'Replay protection', 'Idempotent APIs', 'Double-entry ledger', 'Outbox + DLQ']
 </script>
 
+{#if route.page === 'provider'}
+  <!-- The provider's own screen: brokersim branding, no trade navigation. -->
+  <div class="shell">
+    <header class="flex items-center justify-between border-b-2 border-brand-purple px-5 py-4 sm:px-8 sm:py-5">
+      <div class="flex items-center gap-2.5 text-xl font-bold">
+        <span class="grid size-[30px] place-items-center rounded-[9px] bg-foreground text-sm text-white">B</span>
+        Brokersim
+      </div>
+      <div class="flex items-center gap-3 text-sm">
+        <span>Provider</span>
+        <Badge class="border-transparent bg-accent text-brand-purple">Simulator</Badge>
+      </div>
+    </header>
+    <main class="p-4 sm:p-8"><Provider /></main>
+    <footer class="flex flex-wrap justify-center gap-x-6 gap-y-1 border-t bg-muted px-5 py-4 text-xs text-muted-foreground">
+      {#each ['Signed webhooks', 'Per-attempt nonces', 'Versioned snapshots', 'Idempotent accepts'] as f}<span>{f}</span>{/each}
+    </footer>
+  </div>
+{:else}
 <div class="shell">
-  <header class="topbar-line flex items-center justify-between px-8 py-5">
+  <header class="topbar-line flex items-center justify-between gap-3 px-5 py-4 sm:px-8 sm:py-5">
     <a class="flex items-center gap-2.5 text-xl font-bold hover:no-underline" href="#/">
       <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
         <defs><linearGradient id="g" x1="0" x2="1"><stop offset="0" stop-color="#2563EB" /><stop offset="1" stop-color="#6D4AFF" /></linearGradient></defs>
@@ -46,26 +72,26 @@
       Tradelab
     </a>
     <div class="flex items-center gap-3 text-sm">
-      <span class="flex items-center gap-1.5 text-muted-foreground">
-        <span class="live-dot" class:on={live.connected}></span>{live.connected ? 'Live' : 'Reconnecting…'}
+      <span class="flex items-center gap-1.5 text-muted-foreground" title={live.connected ? 'Live updates connected' : 'Reconnecting to live updates'}>
+        <span class="live-dot" class:on={live.connected}></span><span class="max-sm:sr-only">{live.connected ? 'Live' : 'Reconnecting…'}</span>
       </span>
-      <Button variant="outline" size="sm" href={providerConsole} target="_blank" rel="noopener">Provider ↗</Button>
-      <span>Developer</span>
-      <Badge class="border-transparent bg-accent text-brand-purple">Demo</Badge>
+      <Button variant="outline" size="sm" href={providerConsole} target="_blank" rel="noopener">
+        Provider <ExternalLink class="size-3.5" />
+      </Button>
     </div>
   </header>
 
-  <nav class="flex gap-1 border-b px-7 pt-2.5" aria-label="Main">
-    {#each tabs as [page, href, label]}
+  <nav class="no-scrollbar flex gap-1 overflow-x-auto border-b px-3 pt-2 sm:px-7" aria-label="Main">
+    {#each tabs as [page, href, label, Icon]}
       <a
         {href}
-        class="-mb-px border-b-2 px-3.5 py-2.5 text-sm font-semibold transition-colors hover:text-foreground hover:no-underline
+        class="-mb-px flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-semibold whitespace-nowrap transition-colors hover:text-foreground hover:no-underline
           {route.page === page ? 'border-brand-purple text-foreground' : 'border-transparent text-muted-foreground'}"
-        aria-current={route.page === page ? 'page' : undefined}>{label}</a>
+        aria-current={route.page === page ? 'page' : undefined}><Icon class="size-4 opacity-70" />{label}</a>
     {/each}
   </nav>
 
-  <main class="p-8 max-md:p-4">
+  <main class="p-4 sm:p-8">
     {#if route.page === 'portfolio'}
       <Portfolio />
     {:else if route.page === 'trade'}
@@ -76,8 +102,6 @@
       <Orders />
     {:else if route.page === 'webhooks'}
       <Webhooks />
-    {:else if route.page === 'provider'}
-      <Provider />
     {:else if route.page === 'ops'}
       <Operations {providerConsole} />
     {:else}
@@ -85,9 +109,10 @@
     {/if}
   </main>
 
-  <footer class="flex justify-center gap-8 border-t bg-muted px-8 py-4 text-[13px] text-muted-foreground">
-    <span>Signed webhooks</span><span>Replay protection</span><span>Idempotent APIs</span><span>Double-entry ledger</span><span>Outbox + DLQ</span>
+  <footer class="flex flex-wrap justify-center gap-x-6 gap-y-1 border-t bg-muted px-5 py-4 text-xs text-muted-foreground">
+    {#each features as f}<span>{f}</span>{/each}
   </footer>
 </div>
+{/if}
 
 <Toaster position="top-right" richColors closeButton />

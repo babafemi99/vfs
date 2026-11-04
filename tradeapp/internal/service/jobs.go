@@ -11,6 +11,7 @@ import (
 
 	"github.com/babafem99/vfs/tradeapp/internal/domain"
 	"github.com/babafem99/vfs/tradeapp/internal/provider"
+	"github.com/babafem99/vfs/tradeapp/internal/reqid"
 )
 
 const maxJobsListed = 200
@@ -29,7 +30,9 @@ var (
 
 // newJob is a pending job due now, with the configured attempt cap and
 // retry budget.
-func (s *Service) newJob(kind string, orderID, eventID *string) domain.Job {
+// newJob builds a pending job. It records the request id in ctx (if any) so
+// the worker's logs for this job carry the id of the request that queued it.
+func (s *Service) newJob(ctx context.Context, kind string, orderID, eventID *string) domain.Job {
 	now := s.now()
 	job := domain.Job{
 		Kind:        kind,
@@ -38,6 +41,7 @@ func (s *Service) newJob(kind string, orderID, eventID *string) domain.Job {
 		Status:      domain.JobPending,
 		MaxAttempts: s.cfg.JobMaxAttempts,
 		RunAt:       now,
+		RequestID:   reqid.Ptr(ctx),
 	}
 	s.resetRetryBudget(&job, now)
 	return job

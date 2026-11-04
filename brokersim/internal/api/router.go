@@ -5,8 +5,8 @@ package api
 import (
 	"crypto/subtle"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"time"
 
 	"github.com/babafem99/vfs/lab/brokersim/internal/domain"
@@ -23,13 +23,16 @@ type Deps struct {
 	Dispatcher *webhook.Dispatcher // used by /dev only
 	APIKey     string
 	Log        *slog.Logger
+
+	// DevTrusted may call /dev besides loopback clients (SIM_DEV_TRUSTED_CIDRS).
+	DevTrusted []netip.Prefix
 }
 
 type Server struct{ Deps }
 
 // NewRouter returns the full handler:
 //   - /v1/*  requires X-Api-Key
-//   - /dev/* needs no key but only answers loopback clients
+//   - /dev/* needs no key but only answers loopback clients (and DevTrusted networks)
 func NewRouter(d Deps) http.Handler {
 	s := &Server{d}
 
@@ -83,13 +86,30 @@ func (s *Server) requireAPIKey(next http.Handler) http.Handler {
 
 func (s *Server) loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+		if !s.devAllowed(r.RemoteAddr) {
 			writeError(w, s.Log, &domain.Error{Code: codeForbidden, Message: "/dev is only available from localhost"}, nil)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// devAllowed: loopback, or an address in a trusted network.
+func (s *Server) devAllowed(remoteAddr string) bool {
+	ap, err := netip.ParseAddrPort(remoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := ap.Addr().Unmap()
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, p := range s.DevTrusted {
+		if p.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 type statusRecorder struct {

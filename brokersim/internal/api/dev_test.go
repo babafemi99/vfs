@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -295,5 +296,22 @@ func TestDevPrices(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != 403 {
 		t.Fatalf("non-loopback: %d", rec.Code)
+	}
+}
+
+func TestDevTrustedNetworks(t *testing.T) {
+	s := &Server{Deps{DevTrusted: []netip.Prefix{netip.MustParsePrefix("172.28.0.0/16")}}}
+	for addr, want := range map[string]bool{
+		"127.0.0.1:5000":        true,
+		"[::1]:5000":            true,
+		"172.28.0.9:5000":       true,  // the web container on the compose network
+		"172.29.0.9:5000":       false, // another network
+		"10.0.0.5:5000":         false,
+		"garbage":               false,
+		"[::ffff:172.28.0.4]:1": true, // IPv4-mapped
+	} {
+		if got := s.devAllowed(addr); got != want {
+			t.Errorf("devAllowed(%q) = %v, want %v", addr, got, want)
+		}
 	}
 }

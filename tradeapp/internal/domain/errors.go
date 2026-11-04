@@ -15,6 +15,8 @@ var (
 	ErrInvalidEntry        = errors.New("invalid ledger entry")
 	ErrIdempotencyConflict = errors.New("idempotency key reused with a different request")
 	ErrRequestInProgress   = errors.New("request with this idempotency key is in progress")
+	ErrUnauthenticated     = errors.New("no authenticated user")
+	ErrReplayDetected      = errors.New("nonce already used: this exact request was received before")
 	ErrNotFound            = errors.New("not found")
 	ErrDuplicate           = errors.New("already exists")
 	ErrConflict            = errors.New("conflict")

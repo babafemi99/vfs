@@ -3,6 +3,7 @@
   import * as Table from '$lib/components/ui/table/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Badge } from '$lib/components/ui/badge/index.js'
+  import * as Dialog from '$lib/components/ui/dialog/index.js'
   import PageHeader from '../components/PageHeader.svelte'
   import { sim } from '../lib/sim.js'
   import { formatMoney } from '../lib/money.js'
@@ -11,17 +12,20 @@
   let orders = $state([])
   let deliveries = $state([])
   let engine = $state(null)
+  let prices = $state([])
   let error = $state('')
+  let resetting = $state(false)
 
   const working = (s) => ['OPEN', 'PARTIALLY_FILLED', 'PENDING_CANCEL'].includes(s)
   const tone = (s) => ({ FILLED: 'tone-completed', REJECTED: 'tone-failed', CANCELLED: 'tone-cancelled', EXPIRED: 'tone-cancelled', delivered: 'tone-completed', failed: 'tone-failed' })[s] ?? 'tone-processing'
 
   async function load() {
     try {
-      const [o, d, e] = await Promise.all([sim.orders(), sim.deliveries(), sim.engine()])
+      const [o, d, e, p] = await Promise.all([sim.orders(), sim.deliveries(), sim.engine(), sim.prices()])
       orders = o.orders ?? []
       deliveries = d.deliveries ?? []
       engine = e
+      prices = p.prices ?? []
       error = ''
     } catch (err) {
       error = `Cannot reach brokersim: ${err.message}`
@@ -44,6 +48,17 @@
     }
   }
 
+  async function reset() {
+    try {
+      await sim.reset()
+      resetting = false
+      toast('Broker reset', 'Every quote, order and delivery at the broker was cleared.', 'warning')
+      load()
+    } catch (err) {
+      toast('Reset failed', err.message, 'error')
+    }
+  }
+
   async function toggle(key) {
     try {
       engine = await sim.setEngine({ [key]: !engine[key] })
@@ -54,13 +69,14 @@
   }
 </script>
 
-<PageHeader eyebrow="Provider console" title="The broker's side" description="brokersim: every action goes through its state machine and sends the same signed webhook its engine would.">
+<PageHeader eyebrow="Provider console" title="The broker's side" description="Every action goes through brokersim's state machine and sends the same signed webhook its engine would. The trade app only learns about it from that webhook, or from its sweeper.">
   {#snippet actions()}
     {#if engine}
       {#each ['auto_fill', 'auto_resolve_cancels', 'market_open'] as key}
         <Button variant={engine[key] ? 'default' : 'outline'} size="sm" onclick={() => toggle(key)}>{key.replaceAll('_', ' ')}: {engine[key] ? 'on' : 'off'}</Button>
       {/each}
     {/if}
+    <Button variant="outline" size="sm" class="border-red-200 bg-red-50 text-loss hover:bg-red-100" onclick={() => (resetting = true)}>Reset broker</Button>
   {/snippet}
 </PageHeader>
 
@@ -102,7 +118,9 @@
   {/if}
 </Card.Root>
 
-<h2 class="mt-8 mb-3 text-xl font-bold">Webhook deliveries</h2>
+<div class="mt-8 grid gap-6 lg:grid-cols-[2fr_1fr]">
+<section>
+<h2 class="mb-3 text-xl font-bold">Webhook deliveries</h2>
 <Card.Root class="max-h-[420px] overflow-y-auto py-0 shadow-none">
   {#if deliveries.length === 0}
     <p class="py-8 text-center text-sm text-muted-foreground">No webhooks sent yet.</p>
@@ -123,3 +141,32 @@
     </Table.Root>
   {/if}
 </Card.Root>
+</section>
+
+<section>
+  <div class="mb-3 flex items-center justify-between"><h2 class="text-xl font-bold">Market</h2><span class="text-xs text-muted-foreground">Bid / ask</span></div>
+  <Card.Root class="py-0 shadow-none">
+    <Table.Root>
+      <Table.Header><Table.Row><Table.Head class="pl-5">Symbol</Table.Head><Table.Head class="text-right">Bid</Table.Head><Table.Head class="pr-5 text-right">Ask</Table.Head></Table.Row></Table.Header>
+      <Table.Body>
+        {#each prices as p (p.symbol)}
+          <Table.Row><Table.Cell class="pl-5 font-semibold">{p.symbol}</Table.Cell><Table.Cell class="num text-right">{formatMoney(p.bid)}</Table.Cell><Table.Cell class="num pr-5 text-right">{formatMoney(p.ask)}</Table.Cell></Table.Row>
+        {/each}
+      </Table.Body>
+    </Table.Root>
+  </Card.Root>
+</section>
+</div>
+
+<Dialog.Root bind:open={resetting}>
+  <Dialog.Content class="sm:max-w-md">
+    <Dialog.Header>
+      <Dialog.Title>Reset the broker?</Dialog.Title>
+      <Dialog.Description>Clears every quote, order and webhook delivery at brokersim. The trade app keeps its own records, so its open orders will show as missing at the provider in reconciliation.</Dialog.Description>
+    </Dialog.Header>
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (resetting = false)}>Keep everything</Button>
+      <Button variant="destructive" onclick={reset}>Reset broker</Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>

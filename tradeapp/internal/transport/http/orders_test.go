@@ -10,17 +10,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/babafem99/vfs/tradeapp/internal/config"
 	"github.com/babafem99/vfs/tradeapp/internal/dbtest"
 	"github.com/babafem99/vfs/tradeapp/internal/domain"
-	"github.com/babafem99/vfs/tradeapp/internal/provider"
-	"github.com/babafem99/vfs/tradeapp/internal/providertest"
 	"github.com/babafem99/vfs/tradeapp/internal/repository"
 	"github.com/babafem99/vfs/tradeapp/internal/service"
-	httpapi "github.com/babafem99/vfs/tradeapp/internal/transport/http"
-	"io"
-	"log/slog"
-	"net/http/httptest"
-	"time"
 )
 
 // runJobs runs every due job once, standing in for the worker.
@@ -269,13 +263,8 @@ func TestJobStatsAndBulkRetryEndpoints(t *testing.T) {
 }
 
 func TestRateLimitOnCreateRoutes(t *testing.T) {
-	repo := repository.New(dbtest.New(t))
-	broker := providertest.New(t)
-	svc := service.New(repo, provider.New(broker.URL, providertest.APIKey, 2*time.Second, nil), service.DefaultConfig())
-	api := httpapi.New(svc, repo, httpapi.Config{RateLimitPerMinute: 1, RateLimitBurst: 2}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	srv := httptest.NewServer(api.Handler())
-	t.Cleanup(srv.Close)
-	e := env{srv: srv, repo: repo, svc: svc, broker: broker}
+	e := newEnv(t, service.DefaultConfig(), config.Config{RateLimitPerMinute: 1, RateLimitBurst: 2})
+	srv := e.srv
 
 	for i := range 2 {
 		if r := e.do(t, "POST", "/api/account/fund", fmt.Sprintf("f%d", i), `{"amount": 100}`); r.status != 200 {

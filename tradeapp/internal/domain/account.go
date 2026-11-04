@@ -52,15 +52,35 @@ type Activity struct {
 	CreatedAt time.Time       `json:"created_at"`
 }
 
-// IdempotencyRecord is a stored idempotency key. ResponseCode is nil while
-// the first request with this key is still running.
+// IdempotencyStatus is where a request with an Idempotency-Key is.
+type IdempotencyStatus string
+
+const (
+	IdempotencyStarted   IdempotencyStatus = "STARTED"   // running
+	IdempotencyCompleted IdempotencyStatus = "COMPLETED" // 2xx, response stored
+	IdempotencyFailed    IdempotencyStatus = "FAILED"    // 4xx stored, or released (no response)
+)
+
+// IdempotencyRecord is a stored idempotency key. A FAILED record with a
+// response is a business rejection to replay; without one it was released
+// (5xx, or reaped as a zombie) and the key may run again.
 type IdempotencyRecord struct {
 	UserID       int64
 	Key          string
 	RequestHash  string
+	RequestPath  string
+	Action       string
+	Status       IdempotencyStatus
 	ResponseCode *int
 	ResponseBody []byte
 	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	ExpiresAt    time.Time
+}
+
+// Replayable reports whether a retry with this key gets the stored response.
+func (r IdempotencyRecord) Replayable() bool {
+	return r.Status == IdempotencyCompleted || (r.Status == IdempotencyFailed && r.ResponseCode != nil)
 }
 
 // InvariantResult is the outcome of one books-add-up check.

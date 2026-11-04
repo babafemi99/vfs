@@ -3,6 +3,7 @@
   import * as Table from '$lib/components/ui/table/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Skeleton } from '$lib/components/ui/skeleton/index.js'
+  import Plus from '@lucide/svelte/icons/plus'
   import PageHeader from '../components/PageHeader.svelte'
   import Stat from '../components/Stat.svelte'
   import FundDialog from '../components/FundDialog.svelte'
@@ -39,23 +40,29 @@
     loadAccount()
   })
 
+  // Prices move every tick at the broker, and positions value and
+  // unrealized P&L move with them: refresh both together, so the tiles and
+  // the positions table never disagree with the Prices table.
   $effect(() => {
     loadPrices()
-    const timer = setInterval(loadPrices, 2000)
+    const timer = setInterval(() => {
+      loadPrices()
+      loadAccount()
+    }, 2000)
     return () => clearInterval(timer)
   })
 </script>
 
 <PageHeader eyebrow="Portfolio" title="Your account" description="Cash, holdings and live prices from the broker.">
-  {#snippet actions()}<Button size="lg" onclick={() => (funding = true)}>+ Fund account</Button>{/snippet}
+  {#snippet actions()}<Button size="lg" onclick={() => (funding = true)}><Plus class="size-4" />Fund account</Button>{/snippet}
 </PageHeader>
 
 {#if error}<p class="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>{/if}
 
 {#if !account}
-  <div class="grid grid-cols-4 gap-4">{#each Array(4) as _}<Skeleton class="h-28 rounded-xl" />{/each}</div>
+  <div class="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">{#each Array(4) as _}<Skeleton class="h-28 rounded-xl" />{/each}</div>
 {:else}
-  <div class="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
+  <div class="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
     <Stat label="Available cash" value={formatMoney(account.cash.available)} hint="Ready to trade" />
     <Stat label="Held for orders" value={formatMoney(account.cash.held)} hint="Released when orders finish" />
     <Stat label="Positions value" value={formatMoney(account.positions_value)} hint="At current bid" />
@@ -114,18 +121,18 @@
   </div>
 
   <section class="mt-8">
-    <div class="mb-3 flex items-center justify-between"><h2 class="text-xl font-bold">Recent activity</h2><span class="text-xs text-muted-foreground">Live from the activity stream</span></div>
+    <div class="mb-3 flex items-center justify-between"><h2 class="text-xl font-bold">Recent activity</h2><a class="text-sm font-semibold text-primary" href="#/orders">All orders</a></div>
     <Card.Root class="shadow-none">
       <Card.Content>
         {#if live.recent.length === 0}
           <p class="py-6 text-center text-sm text-muted-foreground">Nothing yet.</p>
         {:else}
           <ul class="timeline">
-            {#each live.recent.slice(0, 8) as item (item.id)}
+            {#each live.recent.slice(0, 6) as item (item.id)}
               <li>
                 <div>{#if orderLabel(item)}<span class="font-semibold">{orderLabel(item)}</span>&nbsp;·&nbsp;{/if}{item.message}</div>
                 <div class="text-xs text-muted-foreground">
-                  {when(item.created_at)}{#if item.order_id} · <a class="text-primary" href="#/orders/{item.order_id}">view order</a>{/if}
+                  {when(item.created_at)}{#if item.order_id}{' · '}<a class="text-primary" href="#/orders/{item.order_id}">view order</a>{/if}
                 </div>
               </li>
             {/each}

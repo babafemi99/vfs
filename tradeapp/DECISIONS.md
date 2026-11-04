@@ -93,7 +93,7 @@ Validation, ID generation (prefixed ULIDs from `pkg/lid`) and orchestration:
 - **How a request runs:**
   1. Reserve the key in its own short transaction.
   2. Run the handler, capturing its response.
-  3. On 2xx, store the status and body. On any other status, delete the key so the client can fix the cause and retry with the same key.
+  3. On 2xx, store the status and body. (Superseded: see "Idempotency records with a status" below. 4xx is now stored too, and 5xx releases the key.)
 - **Same key again:**
   - Different request (method, path and raw body hash) → `422 idempotency_conflict`.
   - Still running → `409 request_in_progress`. With 20 concurrent same-key requests, one does the work and the others get `409` or a replay.
@@ -360,7 +360,7 @@ Validation, ID generation (prefixed ULIDs from `pkg/lid`) and orchestration:
   - The stream lifts the server's write timeout for its own connection.
 - **Middleware fix:** `statusWriter` has `Unwrap()`, so `http.ResponseController` can flush and set deadlines through the logging middleware.
 
-## Web console (`web/`)
+## Web console (now at the repo root, `web/`)
 - **Stack:** Svelte 5 and Vite, plain JavaScript.
   - **No SvelteKit, TypeScript, CSS framework or component library.** The only runtime dependency is the Manrope font package. About 29 KB of gzipped JS.
   - **Why plain CSS:** shadcn-svelte would match the look too, but it brings Tailwind, Bits UI and copied components. The console needs about eight components, written once in `src/app.css`.
@@ -423,3 +423,95 @@ Validation, ID generation (prefixed ULIDs from `pkg/lid`) and orchestration:
   - the processing result, with a link to the order;
   - the signed headers;
   - the payload, flagged when unverified.
+
+
+## One web app at the repo root
+- **Location:** the console moved from `tradeapp/web` to `web/` at the repo root. It serves both systems from one origin through the Vite proxy:
+  - `/api` → the trade app (:8091), including both SSE streams;
+  - `/sim` → brokersim's dev API (:8090).
+- **Two consoles, one app:**
+  - the trade console (`/#/`, `/#/trade`, `/#/orders`, `/#/webhooks`, `/#/ops`);
+  - the provider console (`/#/provider`), with its own Brokersim header and no trade navigation, opened in a new tab from "Provider ↗".
+- **Shared:** shadcn, Sonner and the brand theme. `make up`, `make test` and the README point at `web/`.
+
+## Rate limiting
+- **What's limited:** a per-user token bucket on the routes that create things: placing orders, getting quotes and funding.
+  - **Budgets:** each group has its own, `RATE_LIMIT_PER_MINUTE` (60) refilling up to a burst of `RATE_LIMIT_BURST` (10). `0` turns it off, which is what tests use.
+  - **Over the limit:** `429 rate_limited` with `Retry-After`, plus a `WARN rate limited` log line.
+- **Where:** the outermost wrapper, before idempotency. Reads are never limited.
+- **Limitation:** in memory, so the limit is per API instance. With several instances the same bucket would live in Redis (a Lua script keeps read-and-update atomic).
+
+## Idempotency in the browser: intents in sessionStorage
+- **One intent per user action** (place this order, add this cash), with one idempotency key kept in `sessionStorage` (`lib/intent.js`) until the server gives a definite answer.
+- **Lost answers:** every request times out after 10s. A timeout, network error, `5xx` or `409 request_in_progress` means "outcome unknown". `sendIdempotent` then retries with the **same key**, with backoff and jitter (0.5s, 1s, 2s), up to 4 attempts.
+  - If the first attempt went through, the server replays its stored response, so nothing happens twice.
+  - A definite answer (success, or a real refusal like `422`, `409 quote_expired`, `429`) ends the intent.
+- **Reloads:** an unconfirmed intent survives the reload.
+  - **Trade** shows "An order didn't get a confirmation… Resume / Discard". Resume resends with the same key.
+  - **The fund dialog** reopens with the pending amount and reuses its key. A different amount starts a new intent.
+- **Keys:** one per quote for orders (confirming the same quote again reuses it), and one per amount for funding.
+- **Why `sessionStorage`:** it's per tab and gone when the tab closes, so a key can't leak into another session's action. Never the URL: keys would end up in history, logs and shared links. Not `localStorage`: a stale key could clash with a new action days later.
+- **Tested in a real browser** (Playwright dropping responses after the server handled them):
+  - One lost answer gives 2 requests and 1 order.
+  - With every answer lost, the app gives up after 4 attempts and keeps the intent; after a reload, Resume gives 1 order and clears the intent.
+
+## Wiring: sys.Dependencies, API, RegisterRoutes
+- **`internal/sys`:** `NewDependencies(ctx, cfg, log)` opens the database and runs migrations. It builds the repository, the provider client (with its breaker) and every service, and returns `*Dependencies` plus a cleanup func. Nothing else constructs services.
+  - `TradeSrv`: accounts, quotes, orders, jobs, recon.
+  - `IdempoSrv`: Idempotency-Key records.
+  - `WebhookSrv`: the replay cache and the webhook log.
+- **`main`:** loads config, builds the dependencies, starts the worker and the cleanup loop (`worker.RunCleanup`), then runs `api := &httpapi.API{Dependency: deps}` and `api.Serve()`. On SIGINT or SIGTERM it calls `api.Shutdown` (drains for up to 10s), stops background work and closes the pool.
+- **Transport:**
+  - `API.Handler()` adds the middleware: request id (`X-Request-Id`, kept or generated, echoed and logged), access log, panic recovery.
+  - `RegisterRoutes(mux)` lists every route in one place.
+  - The router is the standard library's `http.ServeMux` (method and path patterns since Go 1.22), so there's no extra dependency.
+- **The transport talks only to services.** No file in `transport/http` imports the repository or pgx.
+  - The idempotency middleware keeps the HTTP side (header, request hash, capture and replay). `IdempoSrv.Reserve` and `IdempoSrv.Complete` decide conflict, in-progress or replay, and store the record.
+  - The webhook handler keeps signature verification (request authentication, like auth middleware). `WebhookSrv.ClaimNonce` returns `ErrReplayDetected`; `RecordLog`, `ListLatestLogs` (limit validation), `GetLog` and `ListLogsAfter` serve the console.
+- **No CORS:** the browser reaches the API through the web app's proxy, which is same-origin.
+
+## Idempotency records with a status (IdempotencyService)
+- **Shape:** the transport middleware runs `Check` (hit → replay; reused → 422), then `Begin` (claim, or 409 `request_in_progress`), then the handler, then `Finish`. The service makes every decision; the middleware only does HTTP.
+- **Statuses:** `STARTED` while running. `COMPLETED` for 2xx (replayed). `FAILED` with the response for 4xx: a business rejection is replayed, not re-run, so a client wanting a new attempt uses a new key. `FAILED` without a response means released, after a 5xx or when reaped as a zombie.
+- **Why 5xx releases instead of staying STARTED:** our handlers return 5xx only when their transaction rolled back, so nothing happened. The browser retries a 5xx within seconds with the same key; leaving it STARTED would answer 409 for the whole zombie window.
+- **One holder at a time:** `Check` treats running and released as misses. `Begin` then inserts the key, or reclaims it only if released (`UPDATE … WHERE status='FAILED' AND response_code IS NULL`), so two concurrent requests can't both run (tested with 20 at once).
+- **Reuse:** the same key with a different body *or* a different path is `422 idempotency_conflict`, whatever the status.
+- **Zombies:** a request that crashed between `Begin` and `Finish` leaves `STARTED`. `SweepZombies` (every minute) releases records started more than `IDEMPOTENCY_ZOMBIE_AFTER` (5m) ago. That's far above any request's duration (the provider timeout is seconds). If one did outlive it, its late `Finish` could overwrite a retry's record. That's the price of not waiting forever.
+- **Who:** the user comes from the context (`domain.Actor`, set by the transport's `withActor` middleware; with auth, the token's user). Keys are scoped per user by the primary key `(user_id, key)`, so one user's key can never replay another's response.
+- **Expiry:** `expires_at = start + IDEMPOTENCY_TTL` (24h); `CleanupExpired` deletes past it.
+
+## Observability: request ids and metrics
+- **Request id end to end** (`internal/reqid`):
+  - The transport keeps the caller's `X-Request-Id`, or generates one, echoes it, and puts it in the context.
+  - A slog handler wrapper adds `request_id` to every record logged with that context. Services, the worker and the transport all log with `*Context(ctx, …)`.
+  - Jobs store the id of the request that queued them (`jobs.request_id`, migration 008), and the worker restores it before running the job. One id therefore covers the HTTP request and the worker submitting the order to the broker seconds later.
+  - Webhook-triggered jobs carry the webhook request's id.
+- **Metrics** (`internal/metrics`, `GET /metrics`):
+  - Prometheus text format, written by hand (about 250 lines) so the dependencies stay at pgx and ulid. Swapping in `client_golang` later only touches that package.
+  - Counters and histograms are recorded where things happen: HTTP by route pattern (`mux.Handler(r)`, so `/api/orders/{id}`, never raw ids), webhook outcomes, rate-limit refusals, idempotency results, job outcomes.
+  - Gauges are read at scrape time by a collector registered in `sys`: jobs by kind and status, dead jobs, oldest waiting job, circuit state. A failing collector is reported in the output and doesn't break the scrape.
+  - `/metrics` and `/healthz` are counted but not logged.
+- **Where /metrics lives:** same port. In production it would be on an internal port; here the web proxy only forwards `/api`, so browsers can't reach it.
+
+## Docker Compose and the observability stack
+- **Two ways to run.** `make up` runs natively (fast to iterate on). `make docker` runs everything in containers, so a reviewer needs only Docker. `make docker-obs` adds the observability stack (Vector, VictoriaLogs, VictoriaMetrics, vmalert) as a Compose **profile**, so the default stays light.
+- **Images:**
+  - Multi-stage builds. The Go binaries are static (`CGO_ENABLED=0`, `-trimpath`) on `distroless/static:nonroot`: no shell or package manager, and not root.
+  - Because there's no curl, each binary checks its own health (`api healthcheck` GETs `/healthz`).
+  - Compose orders startup on health: Postgres → brokersim → API → web, using `--wait`.
+- **The web image** is nginx serving the Vite build. It also proxies `/api` (SSE: `proxy_buffering off`, 1h read timeout) and `/sim`, so the browser sees one origin just as with the Vite dev server: no CORS.
+  - nginx logs JSON with the same `request_id` it passes to the API: the browser's id if sent, otherwise `$request_id`. The proxy hop shows up in the same trace.
+- **brokersim in a container** needed three settings:
+  - `SIM_DEV_TRUSTED_CIDRS`: `/dev` stays loopback-only by default, and trusts only the Compose network, 172.28.0.0/16.
+  - `SIM_AUTO_RESOLVE_CANCELS`: manual mode without a `curl` after startup.
+  - `SIM_SEED=0` for a random seed: the trade app's database is a volume that outlives brokersim, so ids must not repeat across runs.
+- **Logs: Vector → VictoriaLogs.**
+  - Vector reads the output of containers labelled `vfs.logs=true` from the Docker socket and parses JSON lines into fields. Postgres's plain-text lines get a level from their text.
+  - It ships to VictoriaLogs through its Elasticsearch-compatible bulk endpoint, with `_msg_field=msg`, `_time_field=time` and `_stream_fields=service`.
+  - The service is a stream field (few values: cheap to filter by). `request_id`, `order_id` and the rest are ordinary fields (many values: never stream fields).
+  - Why this pair: VictoriaLogs is a single binary, cheap on disk and RAM, with a simple query language (LogsQL). Vector is a small agent that decouples apps from the log store: apps just write JSON to stdout (the twelve-factor way), and shipping, parsing, retries and backpressure are Vector's job.
+- **Metrics: VictoriaMetrics + vmalert.**
+  - VictoriaMetrics scrapes `/metrics` with the Prometheus scrape format, so the app works unchanged with Prometheus too.
+  - vmalert evaluates `deploy/vmalert/alerts.yml` and writes alert state back as `ALERTS` series (queryable, and restored after a restart). With no Alertmanager here, notifications go to a blackhole; in production, `-notifier.url` would point at Alertmanager.
+- **No Grafana:** it was there at first, then removed to keep the stack small. VictoriaLogs, VictoriaMetrics and vmalert each have their own web UI, and nothing in the app depends on a dashboard tool. vmalert, not Grafana, owns alerting, so alerts don't depend on the dashboard tool either. Adding Grafana back is two data sources pointing at the same stores.
+- **Versions:** every image is pinned to a release at least two weeks old. Every host port can be overridden (`WEB_PORT`, `API_PORT`, …), with a web default (8088) that avoids the common 8080.

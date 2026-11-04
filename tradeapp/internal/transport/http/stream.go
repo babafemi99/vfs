@@ -8,9 +8,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
-	"github.com/babafem99/vfs/tradeapp/internal/domain"
 	"github.com/babafem99/vfs/tradeapp/internal/service"
 )
 
@@ -32,7 +29,7 @@ type streamItem struct {
 // browser sends when it reconnects), then follows new rows by polling. It
 // reads the database, so nothing is missed and it works with several API
 // instances.
-func (s *Server) sse(w http.ResponseWriter, r *http.Request, event string,
+func (s *API) sse(w http.ResponseWriter, r *http.Request, event string,
 	next func(ctx context.Context, after int64) ([]streamItem, error)) {
 
 	after := int64(0)
@@ -70,7 +67,7 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request, event string,
 		items, err := next(r.Context(), after)
 		if err != nil {
 			if r.Context().Err() == nil {
-				s.log.Warn("stream read failed", "event", event, "err", err)
+				s.Dependency.Logger.WarnContext(r.Context(), "stream read failed", "event", event, "err", err)
 			}
 			return
 		}
@@ -109,9 +106,9 @@ func (s *Server) sse(w http.ResponseWriter, r *http.Request, event string,
 }
 
 // stream is GET /api/stream: the activity feed, live.
-func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
+func (s *API) stream(w http.ResponseWriter, r *http.Request) {
 	s.sse(w, r, "activity", func(ctx context.Context, after int64) ([]streamItem, error) {
-		items, err := s.svc.ListActivity(ctx, DemoUserID, after, service.MaxActivityLimit)
+		items, err := s.Dependency.TradeSrv.ListActivity(ctx, DemoUserID, after, service.MaxActivityLimit)
 		out := make([]streamItem, len(items))
 		for i, a := range items {
 			out[i] = streamItem{ID: a.ID, Data: a}
@@ -121,14 +118,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 }
 
 // webhookStream is GET /api/admin/webhooks/stream: every webhook request, live.
-func (s *Server) webhookStream(w http.ResponseWriter, r *http.Request) {
+func (s *API) webhookStream(w http.ResponseWriter, r *http.Request) {
 	s.sse(w, r, "webhook", func(ctx context.Context, after int64) ([]streamItem, error) {
-		var logs []domain.WebhookLog
-		err := s.repo.RunInTx(ctx, func(tx pgx.Tx) error {
-			var err error
-			logs, err = s.webhookRepo.ListLogsAfter(ctx, tx, after, streamBatch)
-			return err
-		})
+		logs, err := s.Dependency.WebhookSrv.ListLogsAfter(ctx, after, streamBatch)
 		out := make([]streamItem, len(logs))
 		for i, l := range logs {
 			out[i] = streamItem{ID: l.ID, Data: l}

@@ -69,16 +69,17 @@ func (l *limiter) allow(key string) (ok bool, wait time.Duration) {
 // rateLimited refuses requests over the limit with 429 and Retry-After.
 // group names the bucket ("orders", "fund"), so each route group has its own
 // budget per user.
-func (s *Server) rateLimited(group string, l *limiter, next http.HandlerFunc) http.HandlerFunc {
+func (s *API) rateLimited(group string, l *limiter, next http.HandlerFunc) http.HandlerFunc {
 	if l == nil {
 		return next
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		ok, wait := l.allow(group + ":" + strconv.Itoa(DemoUserID))
 		if !ok {
+			s.Dependency.Metrics.RateLimited.Inc(group)
 			seconds := int(math.Ceil(wait.Seconds()))
 			w.Header().Set("Retry-After", strconv.Itoa(seconds))
-			s.log.Warn("rate limited", "group", group, "user_id", DemoUserID, "retry_after_s", seconds)
+			s.Dependency.Logger.WarnContext(r.Context(), "rate limited", "group", group, "user_id", DemoUserID, "retry_after_s", seconds)
 			writeError(w, http.StatusTooManyRequests, "rate_limited",
 				"too many requests, try again in "+strconv.Itoa(seconds)+"s")
 			return

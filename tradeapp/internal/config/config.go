@@ -13,6 +13,8 @@ type Config struct {
 	Addr           string        // API_ADDR
 	DatabaseURL    string        // DATABASE_URL
 	IdempotencyTTL time.Duration // IDEMPOTENCY_TTL: keys older than this are deleted
+	// IDEMPOTENCY_ZOMBIE_AFTER: a key still running after this is released
+	IdempotencyZombieAfter time.Duration
 
 	ProviderURL     string        // PROVIDER_URL: brokersim
 	ProviderAPIKey  string        // PROVIDER_API_KEY: sent as X-Api-Key
@@ -66,9 +68,10 @@ func Load() (Config, error) {
 	}
 
 	c := Config{
-		Addr:           env("API_ADDR", ":8091"),
-		DatabaseURL:    env("DATABASE_URL", "postgres://localhost:5432/tradeapp?sslmode=disable"),
-		IdempotencyTTL: duration("IDEMPOTENCY_TTL", "24h"),
+		Addr:                   env("API_ADDR", ":8091"),
+		DatabaseURL:            env("DATABASE_URL", "postgres://localhost:5432/tradeapp?sslmode=disable"),
+		IdempotencyTTL:         duration("IDEMPOTENCY_TTL", "24h"),
+		IdempotencyZombieAfter: duration("IDEMPOTENCY_ZOMBIE_AFTER", "5m"),
 
 		ProviderURL:     env("PROVIDER_URL", "http://localhost:8090"),
 		ProviderAPIKey:  env("PROVIDER_API_KEY", "sim_test_key"),

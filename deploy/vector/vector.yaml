@@ -1,0 +1,63 @@
+# Container logs → VictoriaLogs.
+#
+# Reads the output of containers labelled vfs.logs=true, turns each line into
+# fields (the Go services and nginx log JSON; Postgres logs plain text) and
+# sends them to VictoriaLogs through its Elasticsearch-compatible endpoint.
+# request_id, order_id, level, status... become searchable fields.
+
+sources:
+  containers:
+    type: docker_logs
+    include_labels: ["vfs.logs=true"]
+
+transforms:
+  fields:
+    type: remap
+    inputs: [containers]
+    source: |
+      raw = string(.message) ?? ""
+      compose_service = string(.label."com.docker.compose.service") ?? "unknown"
+
+      parsed, err = parse_json(raw)
+      if err == null && is_object(parsed) {
+        . = merge(., object!(parsed))
+      } else {
+        .msg = raw
+        .level = if match(raw, r'\b(ERROR|FATAL|PANIC)\b') {
+          "ERROR"
+        } else if match(raw, r'\bWARNING\b') {
+          "WARN"
+        } else {
+          "INFO"
+        }
+      }
+
+      # Services name themselves in their JSON ("tradeapp-api", "brokersim",
+      # "web"); anything else is named after its compose service.
+      if !exists(.service) { .service = compose_service }
+      if !exists(.time) { .time = .timestamp }
+      if !exists(.level) { .level = "INFO" }
+
+      del(.message)
+      del(.label)
+      del(.timestamp)
+      del(.source_type)
+      del(.container_created_at)
+      del(.container_id)
+      del(.image)
+      del(.stream)
+
+sinks:
+  victorialogs:
+    type: elasticsearch
+    inputs: [fields]
+    endpoints: ["http://victorialogs:9428/insert/elasticsearch/"]
+    mode: bulk
+    api_version: v8
+    compression: gzip
+    healthcheck:
+      enabled: false
+    query:
+      _msg_field: msg
+      _time_field: time
+      _stream_fields: service

@@ -84,7 +84,7 @@ func (s *Service) PlaceOrder(ctx context.Context, userID int64, quoteID string) 
 		}
 
 		// 4. Queue the submission to the provider.
-		if err := s.jobRepo.CreateJob(ctx, tx, s.newJob(domain.JobSubmitOrder, &orderID, nil)); err != nil {
+		if err := s.jobRepo.CreateJob(ctx, tx, s.newJob(ctx, domain.JobSubmitOrder, &orderID, nil)); err != nil {
 			return err
 		}
 
@@ -101,7 +101,7 @@ func (s *Service) PlaceOrder(ctx context.Context, userID int64, quoteID string) 
 		return nil, err
 	}
 
-	s.log.Info("order placed", "order_id", order.ID, "side", order.Side, "qty", order.Qty,
+	s.log.InfoContext(ctx, "order placed", "order_id", order.ID, "side", order.Side, "qty", order.Qty,
 		"symbol", order.Symbol, "price", order.Price, "hold", order.HoldAmount)
 	s.notifyJobsReady()
 	return &order, nil
@@ -243,7 +243,7 @@ func (s *Service) markOrderSubmitted(ctx context.Context, orderID string, po pro
 		if err := s.orderRepo.UpdateOrderStatus(ctx, tx, orderID, domain.StatusOpen); err != nil {
 			return err
 		}
-		s.log.Info("order submitted", "order_id", orderID, "provider_order_id", po.ID)
+		s.log.InfoContext(ctx, "order submitted", "order_id", orderID, "provider_order_id", po.ID)
 		return s.addOrderActivity(ctx, tx, order, "order.submitted",
 			fmt.Sprintf("%s %d %s sent to the broker", order.Side, order.Qty, order.Symbol))
 	})
@@ -269,7 +269,7 @@ func (s *Service) rejectOrder(ctx context.Context, orderID, reason string) error
 		if err := s.orderRepo.UpdateOrderReason(ctx, tx, orderID, reason); err != nil {
 			return err
 		}
-		s.log.Warn("order rejected by provider", "order_id", orderID, "reason", reason)
+		s.log.WarnContext(ctx, "order rejected by provider", "order_id", orderID, "reason", reason)
 		return s.addOrderActivity(ctx, tx, order, "order.rejected",
 			fmt.Sprintf("Rejected: %s", reason))
 	})

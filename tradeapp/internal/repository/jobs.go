@@ -13,10 +13,10 @@ import (
 type JobRepo struct{}
 
 func (JobRepo) CreateJob(ctx context.Context, tx pgx.Tx, j domain.Job) error {
-	stmt := `INSERT INTO jobs (kind, order_id, event_id, status, attempts, max_attempts, run_at, give_up_at)
-	         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	stmt := `INSERT INTO jobs (kind, order_id, event_id, status, attempts, max_attempts, run_at, give_up_at, request_id)
+	         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 
-	_, err := tx.Exec(ctx, stmt, j.Kind, j.OrderID, j.EventID, j.Status, j.Attempts, j.MaxAttempts, j.RunAt, j.GiveUpAt)
+	_, err := tx.Exec(ctx, stmt, j.Kind, j.OrderID, j.EventID, j.Status, j.Attempts, j.MaxAttempts, j.RunAt, j.GiveUpAt, j.RequestID)
 	return err
 }
 
@@ -26,7 +26,7 @@ func (JobRepo) CreateJob(ctx context.Context, tx pgx.Tx, j domain.Job) error {
 func (JobRepo) GetDueJobsForUpdate(ctx context.Context, tx pgx.Tx, now time.Time, kinds []string, limit int) ([]domain.Job, error) {
 	stmt := `
 		SELECT id, kind, order_id, event_id, status, attempts, max_attempts, run_at, give_up_at,
-		       locked_until, last_error, created_at, updated_at
+		       locked_until, last_error, request_id, created_at, updated_at
 		FROM jobs
 		WHERE kind = ANY($2)
 		  AND ((status = 'pending' AND run_at <= $1)
@@ -55,7 +55,7 @@ func (JobRepo) GetDueJobsForUpdate(ctx context.Context, tx pgx.Tx, now time.Time
 func (JobRepo) GetJobForUpdate(ctx context.Context, tx pgx.Tx, id int64) (domain.Job, error) {
 	stmt := `
 		SELECT id, kind, order_id, event_id, status, attempts, max_attempts, run_at, give_up_at,
-		       locked_until, last_error, created_at, updated_at
+		       locked_until, last_error, request_id, created_at, updated_at
 		FROM jobs
 		WHERE id = $1
 		FOR UPDATE`
@@ -71,7 +71,7 @@ func (JobRepo) GetJobForUpdate(ctx context.Context, tx pgx.Tx, id int64) (domain
 func (JobRepo) GetLatestOrderJobForUpdate(ctx context.Context, tx pgx.Tx, orderID, kind string) (domain.Job, error) {
 	stmt := `
 		SELECT id, kind, order_id, event_id, status, attempts, max_attempts, run_at, give_up_at,
-		       locked_until, last_error, created_at, updated_at
+		       locked_until, last_error, request_id, created_at, updated_at
 		FROM jobs
 		WHERE order_id = $1 AND kind = $2
 		ORDER BY id DESC
@@ -89,7 +89,7 @@ func (JobRepo) GetLatestOrderJobForUpdate(ctx context.Context, tx pgx.Tx, orderI
 func (JobRepo) ListJobs(ctx context.Context, tx pgx.Tx, status string, limit int) ([]domain.Job, error) {
 	stmt := `
 		SELECT id, kind, order_id, event_id, status, attempts, max_attempts, run_at, give_up_at,
-		       locked_until, last_error, created_at, updated_at
+		       locked_until, last_error, request_id, created_at, updated_at
 		FROM jobs
 		WHERE status = $1
 		ORDER BY updated_at DESC
@@ -152,7 +152,7 @@ func (JobRepo) GetOldestWaitingCreatedAt(ctx context.Context, tx pgx.Tx) (*time.
 func (JobRepo) ListJobsUpdatedBetweenForUpdate(ctx context.Context, tx pgx.Tx, status string, kinds []string, from, to time.Time, limit int) ([]domain.Job, error) {
 	stmt := `
 		SELECT id, kind, order_id, event_id, status, attempts, max_attempts, run_at, give_up_at,
-		       locked_until, last_error, created_at, updated_at
+		       locked_until, last_error, request_id, created_at, updated_at
 		FROM jobs
 		WHERE status = $1 AND kind = ANY($2) AND updated_at >= $3 AND updated_at < $4
 		ORDER BY updated_at
@@ -198,7 +198,7 @@ func scanJob(row pgx.Row) (domain.Job, error) {
 	var j domain.Job
 	err := row.Scan(
 		&j.ID, &j.Kind, &j.OrderID, &j.EventID, &j.Status, &j.Attempts, &j.MaxAttempts, &j.RunAt, &j.GiveUpAt,
-		&j.LockedUntil, &j.LastError, &j.CreatedAt, &j.UpdatedAt,
+		&j.LockedUntil, &j.LastError, &j.RequestID, &j.CreatedAt, &j.UpdatedAt,
 	)
 	return j, err
 }

@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/babafem99/vfs/tradeapp/internal/domain"
 	"github.com/babafem99/vfs/tradeapp/internal/provider"
 )
@@ -26,7 +24,7 @@ import (
 //
 // Every request, whatever happened to it, is written to the webhook log for
 // the console's inspector.
-func (s *Server) providerWebhook(w http.ResponseWriter, r *http.Request) {
+func (s *API) providerWebhook(w http.ResponseWriter, r *http.Request) {
 	entry := domain.WebhookLog{
 		RemoteAddr:      strPtr(r.RemoteAddr),
 		Timestamp:       strPtr(r.Header.Get(provider.HeaderTimestamp)),
@@ -44,9 +42,9 @@ func (s *Server) providerWebhook(w http.ResponseWriter, r *http.Request) {
 	describeEvent(&entry, body)
 
 	// 1. Signature, timestamp, nonce.
-	err = provider.VerifySignature(s.cfg.WebhookSecret, r.Header.Get(provider.HeaderTimestamp),
+	err = provider.VerifySignature(s.Dependency.Config.WebhookSecret, r.Header.Get(provider.HeaderTimestamp),
 		r.Header.Get(provider.HeaderNonce), body, r.Header.Get(provider.HeaderSignature),
-		s.cfg.WebhookTolerance, time.Now())
+		s.Dependency.Config.WebhookTolerance, time.Now())
 	if err != nil {
 		outcome := domain.WebhookRejectedSignature
 		switch {
@@ -62,10 +60,8 @@ func (s *Server) providerWebhook(w http.ResponseWriter, r *http.Request) {
 	entry.Verified = true
 
 	// 2. Replay: a nonce may be used once.
-	err = s.repo.RunInTx(r.Context(), func(tx pgx.Tx) error {
-		return s.webhookRepo.CreateNonce(r.Context(), tx, r.Header.Get(provider.HeaderNonce))
-	})
-	if errors.Is(err, domain.ErrDuplicate) {
+	err = s.Dependency.WebhookSrv.ClaimNonce(r.Context(), r.Header.Get(provider.HeaderNonce))
+	if errors.Is(err, domain.ErrReplayDetected) {
 		s.recordWebhook(r, entry, body, domain.WebhookRejectedReplay, "nonce already used: this exact request was received before")
 		writeError(w, http.StatusConflict, "replay_detected", "nonce already used")
 		return
@@ -77,7 +73,7 @@ func (s *Server) providerWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Into the inbox.
-	duplicate, err := s.svc.ReceiveProviderEvent(r.Context(), body)
+	duplicate, err := s.Dependency.TradeSrv.ReceiveProviderEvent(r.Context(), body)
 	if err != nil {
 		outcome := domain.WebhookError
 		if errors.Is(err, domain.ErrInvalidArgument) {
@@ -98,37 +94,27 @@ func (s *Server) providerWebhook(w http.ResponseWriter, r *http.Request) {
 
 // recordWebhook logs the request (slog) and writes it to the webhook log.
 // It uses a context that survives the client hanging up.
-func (s *Server) recordWebhook(r *http.Request, entry domain.WebhookLog, body []byte, outcome, detail string) {
+func (s *API) recordWebhook(r *http.Request, entry domain.WebhookLog, body []byte, outcome, detail string) {
 	entry.Outcome = outcome
+	s.Dependency.Metrics.Webhooks.Inc(outcome)
 	if detail != "" {
 		entry.Detail = &detail
 	}
-	entry.BodySize = len(body)
-	if len(body) > domain.MaxLoggedBody {
-		body = body[:domain.MaxLoggedBody]
-	}
-	if body == nil {
-		body = []byte{}
-	}
-
 	attrs := []any{"outcome", outcome, "event_id", deref(entry.EventID), "type", deref(entry.EventType),
 		"provider_order_id", deref(entry.ProviderOrderID), "nonce", deref(entry.Nonce), "remote", r.RemoteAddr}
 	if detail != "" {
 		attrs = append(attrs, "detail", detail)
 	}
 	if entry.Verified && (outcome == domain.WebhookAccepted || outcome == domain.WebhookDuplicate) {
-		s.log.Info("webhook received", attrs...)
+		s.Dependency.Logger.InfoContext(r.Context(), "webhook received", attrs...)
 	} else {
-		s.log.Warn("webhook refused", attrs...)
+		s.Dependency.Logger.WarnContext(r.Context(), "webhook refused", attrs...)
 	}
 
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 	defer cancel()
-	err := s.repo.RunInTx(ctx, func(tx pgx.Tx) error {
-		return s.webhookRepo.CreateLog(ctx, tx, entry, body)
-	})
-	if err != nil {
-		s.log.Error("webhook log write failed", "err", err)
+	if err := s.Dependency.WebhookSrv.RecordLog(ctx, entry, body); err != nil {
+		s.Dependency.Logger.ErrorContext(r.Context(), "webhook log write failed", "err", err)
 	}
 }
 

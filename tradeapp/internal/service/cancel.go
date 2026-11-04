@@ -53,7 +53,7 @@ func (s *Service) CancelOrder(ctx context.Context, userID int64, orderID string)
 			if err := s.orderRepo.UpdateOrderStatus(ctx, tx, o.ID, domain.StatusPendingCancel); err != nil {
 				return err
 			}
-			if err := s.jobRepo.CreateJob(ctx, tx, s.newJob(domain.JobCancelOrder, &o.ID, nil)); err != nil {
+			if err := s.jobRepo.CreateJob(ctx, tx, s.newJob(ctx, domain.JobCancelOrder, &o.ID, nil)); err != nil {
 				return err
 			}
 			o.Status = domain.StatusPendingCancel
@@ -76,7 +76,7 @@ func (s *Service) CancelOrder(ctx context.Context, userID int64, orderID string)
 		return nil, false, err
 	}
 
-	s.log.Info("cancel requested", "order_id", result.ID, "status", result.Status, "pending", pending)
+	s.log.InfoContext(ctx, "cancel requested", "order_id", result.ID, "status", result.Status, "pending", pending)
 	if queued {
 		s.notifyJobsReady()
 	}

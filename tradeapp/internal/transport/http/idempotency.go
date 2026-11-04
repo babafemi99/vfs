@@ -3,14 +3,10 @@ package httpapi
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/babafem99/vfs/tradeapp/internal/domain"
 )
@@ -18,17 +14,12 @@ import (
 const maxIdempotencyKeyLen = 255
 
 // idempotent makes a POST handler run at most once per Idempotency-Key.
+// action names the operation in the stored record ("account.fund").
 //
-//  1. Reserve the key (its own short transaction). If it already exists:
-//     different request → 422, still running → 409, finished → replay the
-//     stored response byte for byte.
-//  2. Run the handler, capturing its response.
-//  3. Success (2xx): store the response for replays. Failure: delete the key,
-//     so the client can fix the cause and retry with the same key.
-//
-// If the process dies between 2 and 3 the key stays "in progress" (409) until
-// it expires, so the work is never repeated.
-func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
+// The HTTP side lives here: read the header and body, capture the response,
+// replay a stored one. IdempoSrv decides everything else (Check, Begin,
+// Finish), including which outcomes are kept.
+func (s *API) idempotent(action string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("Idempotency-Key")
 		if key == "" {
@@ -47,65 +38,39 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 
-		sum := sha256.Sum256([]byte(r.Method + " " + r.URL.Path + "\n" + string(body)))
-		hash := hex.EncodeToString(sum[:])
+		idempo, count := s.Dependency.IdempoSrv, s.Dependency.Metrics.Idempotency
+		record, hit, reused := idempo.Check(r.Context(), key, r.URL.Path, body)
+		if reused {
+			count.Inc("conflict")
+			s.writeErr(w, r, domain.ErrIdempotencyConflict)
+			return
+		}
+		if hit {
+			count.Inc("replayed")
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Idempotent-Replayed", "true")
+			w.WriteHeader(*record.ResponseCode)
+			_, _ = w.Write(record.ResponseBody)
+			return
+		}
 
-		// 1. Reserve the key, or read the existing one.
-		reserved := false
-		var existing domain.IdempotencyRecord
-		err = s.repo.RunInTx(r.Context(), func(tx pgx.Tx) error {
-			err := s.keyRepo.CreateKey(r.Context(), tx, domain.IdempotencyRecord{
-				UserID:      DemoUserID,
-				Key:         key,
-				RequestHash: hash,
-			})
-			if err == nil {
-				reserved = true
-				return nil
+		if err := idempo.Begin(r.Context(), key, r.URL.Path, action, body); err != nil {
+			if errors.Is(err, domain.ErrRequestInProgress) {
+				count.Inc("in_progress")
 			}
-			if !errors.Is(err, domain.ErrDuplicate) {
-				return err
-			}
-			existing, err = s.keyRepo.GetKey(r.Context(), tx, DemoUserID, key)
-			return err
-		})
-		if err != nil {
 			s.writeErr(w, r, err)
 			return
 		}
+		count.Inc("new")
 
-		if !reserved {
-			switch {
-			case existing.RequestHash != hash:
-				writeError(w, http.StatusUnprocessableEntity, "idempotency_conflict", domain.ErrIdempotencyConflict.Error())
-			case existing.ResponseCode == nil:
-				writeError(w, http.StatusConflict, "request_in_progress", domain.ErrRequestInProgress.Error())
-			default:
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Idempotent-Replayed", "true")
-				w.WriteHeader(*existing.ResponseCode)
-				_, _ = w.Write(existing.ResponseBody)
-			}
-			return
-		}
-
-		// 2. Run the handler.
 		rec := &captureWriter{header: http.Header{}, status: http.StatusOK}
 		next(rec, r)
 
-		// 3. Store the response, or free the key. Use a context that survives
-		//    the client disconnecting so the key is never left half done.
+		// Use a context that survives the client hanging up, so the outcome
+		// is stored even if nobody is waiting for it.
 		saveCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 		defer cancel()
-		err = s.repo.RunInTx(saveCtx, func(tx pgx.Tx) error {
-			if rec.status >= 200 && rec.status < 300 {
-				return s.keyRepo.UpdateKeyResponse(saveCtx, tx, DemoUserID, key, rec.status, rec.body.Bytes())
-			}
-			return s.keyRepo.DeleteKey(saveCtx, tx, DemoUserID, key)
-		})
-		if err != nil {
-			s.log.Error("idempotency: saving result failed", "key", key, "err", err)
-		}
+		idempo.Finish(saveCtx, key, rec.status, rec.body.Bytes())
 
 		for k, v := range rec.header {
 			w.Header()[k] = v
@@ -113,44 +78,6 @@ func (s *Server) idempotent(next http.HandlerFunc) http.HandlerFunc {
 		w.WriteHeader(rec.status)
 		_, _ = w.Write(rec.body.Bytes())
 	}
-}
-
-// webhookLogRetention is how long the webhook log keeps requests.
-const webhookLogRetention = 7 * 24 * time.Hour
-
-// RunKeyCleanup deletes, every interval until ctx is cancelled: expired
-// idempotency keys, webhook nonces older than twice the timestamp tolerance
-// (the timestamp check already refuses anything that old), and webhook log
-// rows past their retention.
-func (s *Server) RunKeyCleanup(ctx context.Context, ttl, every time.Duration) {
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
-	for {
-		if err := s.DeleteExpiredIdempotencyKeys(ctx, ttl); err != nil && ctx.Err() == nil {
-			s.log.Warn("idempotency cleanup failed", "err", err)
-		}
-		err := s.repo.RunInTx(ctx, func(tx pgx.Tx) error {
-			if err := s.webhookRepo.DeleteNoncesSeenBefore(ctx, tx, time.Now().Add(-2*s.cfg.WebhookTolerance)); err != nil {
-				return err
-			}
-			return s.webhookRepo.DeleteLogsReceivedBefore(ctx, tx, time.Now().Add(-webhookLogRetention))
-		})
-		if err != nil && ctx.Err() == nil {
-			s.log.Warn("webhook cleanup failed", "err", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
-}
-
-// DeleteExpiredIdempotencyKeys removes keys older than ttl.
-func (s *Server) DeleteExpiredIdempotencyKeys(ctx context.Context, ttl time.Duration) error {
-	return s.repo.RunInTx(ctx, func(tx pgx.Tx) error {
-		return s.keyRepo.DeleteKeysCreatedBefore(ctx, tx, time.Now().Add(-ttl))
-	})
 }
 
 // captureWriter buffers a handler's response so it can be stored before it

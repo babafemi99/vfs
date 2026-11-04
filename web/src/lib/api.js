@@ -1,15 +1,32 @@
 // Thin fetch wrappers for the trade API. Errors carry the API's error code.
 
+const TIMEOUT_MS = 10_000
+
 async function request(method, path, { body, key } = {}) {
   const headers = {}
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (key) headers['Idempotency-Key'] = key
 
-  const res = await fetch(path, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  // A request that gets no answer is "outcome unknown", not "failed":
+  // err.network / err.timeout let callers retry safely with the same key.
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  let res
+  try {
+    res = await fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: controller.signal,
+    })
+  } catch (cause) {
+    const err = new Error(cause.name === 'AbortError' ? 'The server took too long to answer' : 'Network error')
+    err.network = true
+    err.timeout = cause.name === 'AbortError'
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
   const text = await res.text()
   const data = text ? JSON.parse(text) : null
   if (!res.ok) {

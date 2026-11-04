@@ -1,4 +1,5 @@
 <script>
+  import ExternalLink from '@lucide/svelte/icons/external-link'
   import * as Card from '$lib/components/ui/card/index.js'
   import * as Table from '$lib/components/ui/table/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -78,7 +79,7 @@
 </script>
 
 <PageHeader eyebrow="Operations" title="System health" description="Job queue, dead letters, reconciliation and the books' invariants.">
-  {#snippet actions()}<Button variant="outline" href={providerConsole} target="_blank" rel="noopener">Open provider console ↗</Button>{/snippet}
+  {#snippet actions()}<Button variant="outline" href={providerConsole} target="_blank" rel="noopener">Open provider console <ExternalLink class="size-3.5" /></Button>{/snippet}
 </PageHeader>
 
 {#if stats}
@@ -190,7 +191,7 @@
         <h3 class="font-semibold">Provider console</h3>
         <p class="text-sm text-muted-foreground">Brokersim's own screen: drive fills, cancels and the market, and see every webhook delivery. Opens in a new tab.</p>
       </div>
-      <span class="text-xl text-muted-foreground">↗</span>
+      <ExternalLink class="size-5 shrink-0 text-muted-foreground" />
     </Card.Content>
   </Card.Root>
 </a>

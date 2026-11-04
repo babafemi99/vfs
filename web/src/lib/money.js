@@ -26,4 +26,4 @@ export function parseDollars(text) {
   return Number(m[1]) * 100 + Number((m[2] || '').padEnd(2, '0'))
 }
 
-export const pnlClass = (cents) => (cents > 0 ? 'gain' : cents < 0 ? 'loss' : '')
+export const pnlClass = (cents) => (cents > 0 ? 'text-gain' : cents < 0 ? 'text-loss' : '')

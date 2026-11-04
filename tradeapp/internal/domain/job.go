@@ -32,6 +32,7 @@ type Job struct {
 	GiveUpAt    *time.Time `json:"give_up_at,omitempty"` // retry budget: dead-lettered after this
 	LockedUntil *time.Time `json:"locked_until,omitempty"`
 	LastError   *string    `json:"last_error,omitempty"`
+	RequestID   *string    `json:"request_id,omitempty"` // the request that queued it, for tracing
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }

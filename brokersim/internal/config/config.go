@@ -4,8 +4,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/babafem99/vfs/lab/brokersim/internal/market"
@@ -16,7 +18,7 @@ type Config struct {
 	APIKey        string
 	WebhookURL    string
 	WebhookSecret string
-	Seed          uint64
+	Seed          uint64 // 0 = random, picked at startup
 	Symbols       []market.Symbol
 	QuoteTTL      time.Duration
 	OrderTTL      time.Duration
@@ -32,6 +34,14 @@ type Config struct {
 	CancelDelayMax   time.Duration
 	FillDuringCancel bool
 	MarketOpen       bool
+
+	// AutoResolveCancels: the engine confirms cancels by itself. Off = cancels
+	// wait for /dev/orders/{id}/cancel/confirm|reject (manual mode).
+	AutoResolveCancels bool
+
+	// DevTrustedNets may call /dev besides loopback (e.g. the Docker network
+	// the web container proxies from). Empty = loopback only.
+	DevTrustedNets []netip.Prefix
 }
 
 // Load reads the process environment.
@@ -58,6 +68,19 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		CancelDelayMax:   p.dur("SIM_CANCEL_DELAY_MAX", 2*time.Second),
 		FillDuringCancel: p.bool("SIM_FILL_DURING_CANCEL", true),
 		MarketOpen:       p.bool("SIM_MARKET_OPEN", true),
+
+		AutoResolveCancels: p.bool("SIM_AUTO_RESOLVE_CANCELS", true),
+	}
+	for _, cidr := range strings.Split(p.str("SIM_DEV_TRUSTED_CIDRS", ""), ",") {
+		if cidr = strings.TrimSpace(cidr); cidr == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(cidr)
+		if err != nil {
+			p.errs = append(p.errs, fmt.Errorf("SIM_DEV_TRUSTED_CIDRS: %w", err))
+			continue
+		}
+		c.DevTrustedNets = append(c.DevTrustedNets, prefix)
 	}
 	syms, err := market.ParseSymbols(p.str("SIM_SYMBOLS", "AAPL:19000,MSFT:41000,TSLA:25000,DANGCEM:48000,MTNN:22000"))
 	if err != nil {

@@ -7,8 +7,8 @@ import (
 	"github.com/babafem99/vfs/tradeapp/internal/service"
 )
 
-func (s *Server) getAccount(w http.ResponseWriter, r *http.Request) {
-	summary, err := s.svc.GetAccount(r.Context(), DemoUserID)
+func (s *API) getAccount(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.Dependency.TradeSrv.GetAccount(r.Context(), DemoUserID)
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
@@ -16,17 +16,13 @@ func (s *Server) getAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, summary)
 }
 
-type fundRequest struct {
-	Amount int64 `json:"amount"`
-}
-
-func (s *Server) fundAccount(w http.ResponseWriter, r *http.Request) {
+func (s *API) fundAccount(w http.ResponseWriter, r *http.Request) {
 	var req fundRequest
 	if !decode(w, r, &req) {
 		return
 	}
 
-	result, err := s.svc.FundAccount(r.Context(), DemoUserID, req.Amount)
+	result, err := s.Dependency.TradeSrv.FundAccount(r.Context(), DemoUserID, req.Amount)
 	if err != nil {
 		s.writeErr(w, r, err)
 		return
@@ -34,7 +30,7 @@ func (s *Server) fundAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
+func (s *API) listActivity(w http.ResponseWriter, r *http.Request) {
 	afterID, limit := int64(0), service.DefaultActivityLimit
 
 	if v := r.URL.Query().Get("after"); v != "" {
@@ -54,7 +50,7 @@ func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
-	items, err := s.svc.ListActivity(r.Context(), DemoUserID, afterID, limit)
+	items, err := s.Dependency.TradeSrv.ListActivity(r.Context(), DemoUserID, afterID, limit)
 	if err != nil {
 		s.writeErr(w, r, err)
 		return

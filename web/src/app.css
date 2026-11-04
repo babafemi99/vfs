@@ -75,6 +75,15 @@
 
 /* ---- the console shell ---- */
 .shell { max-width: 1120px; margin: 32px auto; background: var(--card); border: 1px solid var(--border); border-radius: 24px; box-shadow: 0 8px 24px rgba(16, 42, 67, 0.08); overflow: hidden; }
+@media (max-width: 640px) {
+  /* Phones: the console fills the screen; no floating card. */
+  .shell { margin: 0; border: 0; border-radius: 0; box-shadow: none; min-height: 100vh; }
+}
+/* Grid columns may shrink below their content (wide tables then scroll
+   inside their card instead of pushing the page wider than the screen). */
+main .grid > * { min-width: 0; }
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
 .topbar-line { border-bottom: 2px solid transparent; border-image: linear-gradient(90deg, #2563eb, #6d4aff) 1; }
 .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--primary); }
 .live-dot { width: 8px; height: 8px; border-radius: 9999px; background: #94a3b8; display: inline-block; }
@@ -121,3 +130,9 @@
 .term-line .what { overflow: hidden; text-overflow: ellipsis; }
 .term-line .dim { color: #64748b; }
 .json { background: #0b1220; color: #e2e8f0; border-radius: 12px; padding: 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow: auto; white-space: pre; }
+
+@media (max-width: 640px) {
+  /* Terminal on phones: time and outcome on one row, the details below. */
+  .term-line { grid-template-columns: 84px 1fr; row-gap: 0; padding-top: 4px; padding-bottom: 4px; }
+  .term-line .what { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; color: #94a3b8; }
+}

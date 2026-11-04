@@ -15,12 +15,15 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/babafem99/vfs/tradeapp/internal/config"
 	"github.com/babafem99/vfs/tradeapp/internal/dbtest"
 	"github.com/babafem99/vfs/tradeapp/internal/domain"
+	"github.com/babafem99/vfs/tradeapp/internal/metrics"
 	"github.com/babafem99/vfs/tradeapp/internal/provider"
 	"github.com/babafem99/vfs/tradeapp/internal/providertest"
 	"github.com/babafem99/vfs/tradeapp/internal/repository"
 	"github.com/babafem99/vfs/tradeapp/internal/service"
+	"github.com/babafem99/vfs/tradeapp/internal/sys"
 	httpapi "github.com/babafem99/vfs/tradeapp/internal/transport/http"
 )
 
@@ -40,11 +43,26 @@ func setup(t *testing.T) env {
 
 func setupWithConfig(t *testing.T, cfg service.Config) env {
 	t.Helper()
+	return newEnv(t, cfg, config.Config{WebhookSecret: webhookSecret, WebhookTolerance: 5 * time.Minute})
+}
+
+// newEnv builds the dependencies the way sys.NewDependencies does, but on a
+// test database and a fake broker, and serves the API.
+func newEnv(t *testing.T, svcCfg service.Config, appCfg config.Config) env {
+	t.Helper()
 	repo := repository.New(dbtest.New(t))
 	broker := providertest.New(t)
-	svc := service.New(repo, provider.New(broker.URL, providertest.APIKey, 2*time.Second, nil), cfg)
-	api := httpapi.New(svc, repo, httpapi.Config{WebhookSecret: webhookSecret, WebhookTolerance: 5 * time.Minute},
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := service.New(repo, provider.New(broker.URL, providertest.APIKey, 2*time.Second, nil), svcCfg)
+	m := metrics.NewApp()
+	sys.RegisterCollectors(m, svc)
+	api := &httpapi.API{Dependency: &sys.Dependencies{
+		Config:     &appCfg,
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:    m,
+		TradeSrv:   svc,
+		IdempoSrv:  service.NewIdempotencyService(repo, service.DefaultIdempotencyConfig(), nil),
+		WebhookSrv: service.NewWebhookService(repo),
+	}}
 	srv := httptest.NewServer(api.Handler())
 	t.Cleanup(srv.Close)
 	return env{srv: srv, repo: repo, svc: svc, broker: broker}
@@ -159,16 +177,37 @@ func TestFundIdempotency(t *testing.T) {
 	dbtest.AssertInvariants(t, e.svc.CheckInvariants)
 }
 
-func TestFailedRequestFreesItsKey(t *testing.T) {
+// A business rejection (4xx) is stored like a success: the same request with
+// the same key replays it instead of running again, and a changed request
+// with that key is a client bug (422). A new attempt needs a new key.
+func TestBusinessRejectionIsReplayed(t *testing.T) {
 	e := setup(t)
-	bad := e.do(t, "POST", "/api/account/fund", "retry-me", `{"amount": 0}`)
-	if bad.status != 400 {
+	bad := e.do(t, "POST", "/api/account/fund", "rejected", `{"amount": 0}`)
+	if bad.status != 400 || bad.replayed {
 		t.Fatalf("bad: %d %s", bad.status, bad.raw)
 	}
-	// Same key, corrected request: allowed, because failures aren't stored.
-	good := e.do(t, "POST", "/api/account/fund", "retry-me", `{"amount": 700}`)
-	if good.status != 200 || good.replayed {
-		t.Fatalf("retry: %d replayed=%v %s", good.status, good.replayed, good.raw)
+	again := e.do(t, "POST", "/api/account/fund", "rejected", `{"amount": 0}`)
+	if again.status != 400 || !again.replayed || again.raw != bad.raw {
+		t.Fatalf("retry: %d replayed=%v %s", again.status, again.replayed, again.raw)
+	}
+	changed := e.do(t, "POST", "/api/account/fund", "rejected", `{"amount": 700}`)
+	if changed.status != 422 || errCode(changed) != "idempotency_conflict" {
+		t.Fatalf("changed body: %d %s", changed.status, changed.raw)
+	}
+	if good := e.do(t, "POST", "/api/account/fund", "new-key", `{"amount": 700}`); good.status != 200 {
+		t.Fatalf("new key: %d %s", good.status, good.raw)
+	}
+}
+
+// The same key on a different route is also reuse, even with the same body.
+func TestKeyReusedOnAnotherRoute(t *testing.T) {
+	e := setup(t)
+	if r := e.do(t, "POST", "/api/account/fund", "k", `{"amount": 100}`); r.status != 200 {
+		t.Fatalf("fund: %d %s", r.status, r.raw)
+	}
+	r := e.do(t, "POST", "/api/orders", "k", `{"amount": 100}`)
+	if r.status != 422 || errCode(r) != "idempotency_conflict" {
+		t.Fatalf("other route: %d %s", r.status, r.raw)
 	}
 }
 

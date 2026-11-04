@@ -1,0 +1,148 @@
+# The whole lab in containers.
+#
+#   docker compose up --build -d --wait                          # the app
+#   docker compose --profile observability up --build -d --wait  # + logs, metrics, alerts
+#
+# Or: make docker / make docker-obs / make docker-down.
+#
+# Host ports can be moved if they clash with something else on your machine:
+# WEB_PORT (8088), API_PORT (8091), SIM_PORT (8090), VLOGS_PORT (9428),
+# VM_PORT (8428), VMALERT_PORT (8880).
+name: vfs
+
+x-app-logs: &app-logs
+  # Vector ships the logs of containers with this label to VictoriaLogs.
+  labels:
+    vfs.logs: "true"
+
+services:
+  # ------------------------------------------------------------------ app
+
+  postgres:
+    image: postgres:18-alpine
+    <<: *app-logs
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tradeapp
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tradeapp"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [vfs]
+
+  brokersim:
+    build: ./brokersim
+    <<: *app-logs
+    environment:
+      SIM_WEBHOOK_URL: http://api:8091/webhooks/provider
+      SIM_WEBHOOK_SECRET: ${WEBHOOK_SECRET:-whsec_test}
+      SIM_API_KEY: ${PROVIDER_API_KEY:-sim_test_key}
+      SIM_SEED: "0" # random ids per run: the trade app's database outlives brokersim
+      # Manual by default: you fill orders and resolve cancels from the
+      # provider console. SIM_AUTO=true lets the engine do it.
+      SIM_AUTO_FILL: ${SIM_AUTO:-false}
+      SIM_AUTO_RESOLVE_CANCELS: ${SIM_AUTO:-false}
+      SIM_ORDER_TTL: 24h
+      # The web container's proxy reaches /dev from this network.
+      SIM_DEV_TRUSTED_CIDRS: 172.28.0.0/16
+    ports:
+      - "${SIM_PORT:-8090}:8090"
+    networks: [vfs]
+
+  api:
+    build: ./tradeapp
+    <<: *app-logs
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/tradeapp?sslmode=disable
+      PROVIDER_URL: http://brokersim:8090
+      PROVIDER_API_KEY: ${PROVIDER_API_KEY:-sim_test_key}
+      PROVIDER_WEBHOOK_SECRET: ${WEBHOOK_SECRET:-whsec_test}
+      LOG_FORMAT: json
+    depends_on:
+      postgres: { condition: service_healthy }
+      brokersim: { condition: service_healthy }
+    ports:
+      - "${API_PORT:-8091}:8091"
+    networks: [vfs]
+
+  web:
+    build: ./web
+    <<: *app-logs
+    depends_on:
+      api: { condition: service_healthy }
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    networks: [vfs]
+
+  # -------------------------------------------- observability (profile)
+
+  # Logs: Vector reads the labelled containers' output from Docker, parses
+  # the JSON lines and sends them to VictoriaLogs.
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.53.0
+    profiles: [observability]
+    command: ["-storageDataPath=/vlogs", "-retentionPeriod=7d"]
+    volumes:
+      - vlogs:/vlogs
+    ports:
+      - "${VLOGS_PORT:-9428}:9428"
+    networks: [vfs]
+
+  vector:
+    image: timberio/vector:0.60.0-alpine
+    profiles: [observability]
+    command: ["--config", "/etc/vector/vector.yaml"]
+    volumes:
+      - ./deploy/vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [victorialogs]
+    networks: [vfs]
+
+  # Metrics: VictoriaMetrics scrapes /metrics (Prometheus format); vmalert
+  # evaluates the alert rules against it. Each has its own web UI (vmui).
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.154.0
+    profiles: [observability]
+    command:
+      - -storageDataPath=/vm
+      - -retentionPeriod=7d
+      - -promscrape.config=/etc/vm/scrape.yml
+    volumes:
+      - ./deploy/victoriametrics/scrape.yml:/etc/vm/scrape.yml:ro
+      - vmdata:/vm
+    ports:
+      - "${VM_PORT:-8428}:8428"
+    networks: [vfs]
+
+  vmalert:
+    image: victoriametrics/vmalert:v1.154.0
+    profiles: [observability]
+    command:
+      - -datasource.url=http://victoriametrics:8428
+      - -remoteWrite.url=http://victoriametrics:8428 # alert state as ALERTS series (queryable, and restored on restart)
+      - -remoteRead.url=http://victoriametrics:8428  # restore state after a restart
+      - -rule=/etc/vmalert/alerts.yml
+      - -evaluationInterval=15s
+      - -notifier.blackhole # no Alertmanager here: firing alerts are shown in the vmalert UI
+      - -external.url=http://localhost:${VMALERT_PORT:-8880}
+    volumes:
+      - ./deploy/vmalert/alerts.yml:/etc/vmalert/alerts.yml:ro
+    depends_on: [victoriametrics]
+    ports:
+      - "${VMALERT_PORT:-8880}:8880"
+    networks: [vfs]
+
+networks:
+  vfs:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  pgdata:
+  vlogs:
+  vmdata:

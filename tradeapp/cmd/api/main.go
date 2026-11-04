@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,99 +13,97 @@ import (
 	"time"
 
 	"github.com/babafem99/vfs/tradeapp/internal/config"
-	"github.com/babafem99/vfs/tradeapp/internal/db"
-	"github.com/babafem99/vfs/tradeapp/internal/provider"
-	"github.com/babafem99/vfs/tradeapp/internal/repository"
-	"github.com/babafem99/vfs/tradeapp/internal/service"
+	"github.com/babafem99/vfs/tradeapp/internal/health"
+	"github.com/babafem99/vfs/tradeapp/internal/reqid"
+	"github.com/babafem99/vfs/tradeapp/internal/sys"
 	httpapi "github.com/babafem99/vfs/tradeapp/internal/transport/http"
 	"github.com/babafem99/vfs/tradeapp/internal/worker"
 )
 
-func main() {
-	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	if err := run(log); err != nil {
-		log.Error("exit", "err", err)
-		os.Exit(1)
-	}
-}
+// drainTimeout is how long shutdown waits for in-flight requests.
+const drainTimeout = 10 * time.Second
 
-func run(log *slog.Logger) error {
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		healthcheck()
+	}
+	log := newLogger(os.Getenv("LOG_FORMAT"))
+
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		log.Error("config", "err", err)
+		os.Exit(1)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
-	pool, err := db.Open(ctx, cfg.DatabaseURL)
+	ctx, stopBackground := context.WithCancel(context.Background())
+	defer stopBackground()
+
+	deps, cleanup, err := sys.NewDependencies(ctx, &cfg, log)
 	if err != nil {
-		return err
+		log.Error("startup", "err", err)
+		os.Exit(1)
 	}
-	defer pool.Close()
-	if err := db.Migrate(ctx, pool); err != nil {
-		return err
-	}
-	log.Info("database ready")
+	defer cleanup()
 
-	repo := repository.New(pool)
-	breaker := provider.NewBreaker(cfg.BreakerThreshold, cfg.BreakerCooldown)
-	breaker.OnStateChange(func(from, to string) {
-		if to == provider.CircuitOpen {
-			log.Warn("provider circuit open: pausing provider calls", "from", from, "cooldown", cfg.BreakerCooldown)
-			return
-		}
-		log.Info("provider circuit "+to, "from", from)
-	})
-	broker := provider.New(cfg.ProviderURL, cfg.ProviderAPIKey, cfg.ProviderTimeout, breaker)
-	svc := service.New(repo, broker, service.Config{
-		JobRetryBudget: cfg.JobRetryBudget,
-		JobMaxAttempts: cfg.JobMaxAttempts,
-		JobBackoffBase: cfg.JobBackoffBase,
-		JobBackoffMax:  cfg.JobBackoffMax,
-		JobLease:       cfg.JobLease,
-		JobLagAlert:    cfg.JobLagAlert,
-		PriceCacheTTL:  time.Second,
-		StuckAfter:     cfg.StuckAfter,
-		ReconLookback:  cfg.ReconLookback,
-		Logger:         log,
-	})
-	api := httpapi.New(svc, repo, httpapi.Config{
-		WebhookSecret:      cfg.WebhookSecret,
-		WebhookTolerance:   cfg.WebhookTolerance,
-		RateLimitPerMinute: cfg.RateLimitPerMinute,
-		RateLimitBurst:     cfg.RateLimitBurst,
-	}, log)
-
-	go worker.New(svc, log, cfg.WorkerPoll, cfg.SweepInterval, cfg.ReconInterval).Run(ctx)
-	go api.RunKeyCleanup(ctx, cfg.IdempotencyTTL, time.Hour)
+	// Background work: the outbox worker (jobs, sweeper, recon) and cleanup.
+	go worker.New(deps.TradeSrv, log, deps.Metrics, cfg.WorkerPoll, cfg.SweepInterval, cfg.ReconInterval).Run(ctx)
+	go worker.RunCleanup(ctx, log, deps.IdempoSrv, deps.WebhookSrv, cfg.WebhookTolerance, time.Minute)
 	log.Info("worker started", "provider", cfg.ProviderURL)
 
-	srv := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           api.Handler(),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
+	api := &httpapi.API{
+		Dependency: deps,
 	}
-	errc := make(chan error, 1)
+
+	serveErr := make(chan error, 1)
 	go func() {
-		log.Info("listening", "addr", cfg.Addr)
-		errc <- srv.ListenAndServe()
+		serveErr <- api.Serve()
 	}()
 
+	stopChan := make(chan os.Signal, 1)
+	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
+
 	select {
-	case err := <-errc:
+	case err := <-serveErr:
 		if !errors.Is(err, http.ErrServerClosed) {
-			return err
+			log.Error("server", "err", err)
+			stopBackground()
+			cleanup()
+			os.Exit(1)
 		}
-	case <-ctx.Done():
-		log.Info("shutting down")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	case <-stopChan:
+		log.Info("shutting down: waiting for connections to drain")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 		defer cancel()
-		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return err
+		if err := api.Shutdown(shutdownCtx); err != nil {
+			log.Error("shutdown", "err", err)
 		}
 	}
-	return nil
+
+	stopBackground() // stop the worker and cleanup, then close the pool (deferred)
+	log.Info("server stopped")
+}
+
+// newLogger writes text (readable in a terminal) or, with LOG_FORMAT=json,
+// one JSON object per line for a log pipeline (Vector → VictoriaLogs), where
+// request_id, order_id and level become searchable fields. Either way, every
+// line written with a request's context carries its request_id.
+func newLogger(format string) *slog.Logger {
+	var h slog.Handler = slog.NewTextHandler(os.Stdout, nil)
+	if format == "json" {
+		h = slog.NewJSONHandler(os.Stdout, nil)
+	}
+	return slog.New(reqid.NewLogHandler(h)).With("service", "tradeapp-api")
+}
+
+// healthcheck is `api healthcheck`, for the container's HEALTHCHECK.
+func healthcheck() {
+	addr := os.Getenv("API_ADDR")
+	if addr == "" {
+		addr = ":8091"
+	}
+	if err := health.Probe(addr, "/healthz"); err != nil {
+		fmt.Fprintln(os.Stderr, "unhealthy:", err)
+		os.Exit(1)
+	}
+	os.Exit(0)
 }

@@ -66,3 +66,16 @@ Choices made where `lab/docs/broker.md` was ambiguous, or where we cut scope.
 - **The signature covers it:** `hex(HMAC-SHA512(secret, "<ts>.<nonce>.<body>"))`, so neither the timestamp nor the nonce can be changed without breaking the signature.
 - **Receivers** can refuse a nonce they have already seen (a replay). Our own retries always use a new nonce, so they are never mistaken for replays.
 - **Interface change:** `Sign` and `Verify` take the nonce, and `Verify` refuses a missing one (`ErrBadNonce`).
+
+## Provider console moved to the root web app
+- **Removed:** brokersim no longer serves an HTML page at `/dev`.
+- **Replacement:** the provider console is a page of the shared web app at the repo root (`web/`, route `/#/provider`). It's built with the same shadcn components and Sonner toasts, under its own Brokersim header.
+- **How it connects:** the web app reaches the JSON `/dev` API through its Vite proxy (`/sim` → `:8090`). The proxied requests come from localhost, so the `/dev` loopback-only rule still holds.
+- **Added:** `GET /dev/prices` (market prices without the API key) for that page.
+
+## Running in a container
+- `SIM_DEV_TRUSTED_CIDRS` (comma-separated CIDRs): networks besides loopback that may call `/dev`. Empty by default, so `/dev` stays loopback-only. Docker Compose trusts only its own network, which the web container's proxy uses.
+- `SIM_AUTO_RESOLVE_CANCELS` (default true): the engine confirms cancels by itself. Off is manual mode, with `SIM_AUTO_FILL=false`.
+- `SIM_SEED=0` picks a random seed at startup. The default stays 42, so tests and local runs are reproducible.
+- `brokersim healthcheck` exits 0 when `/dev/engine` answers. The image is distroless, with no curl for a healthcheck.
+- Logs are JSON with `service=brokersim`, ready for the log pipeline.

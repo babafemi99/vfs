@@ -172,7 +172,7 @@ func (s *Service) payBuyFillIfAffordable(ctx context.Context, tx pgx.Tx, userID 
 }
 
 func (s *Service) recordBreak(ctx context.Context, tx pgx.Tx, orderID, kind, detail string) error {
-	s.log.Warn("break recorded", "order_id", orderID, "kind", kind, "detail", detail)
+	s.log.WarnContext(ctx, "break recorded", "order_id", orderID, "kind", kind, "detail", detail)
 	return s.breakRepo.CreateBreak(ctx, tx, domain.Break{OrderID: &orderID, Kind: kind, Detail: detail})
 }
 

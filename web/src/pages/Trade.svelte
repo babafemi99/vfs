@@ -1,13 +1,14 @@
 <script>
   import * as Card from '$lib/components/ui/card/index.js'
   import * as Select from '$lib/components/ui/select/index.js'
-  import * as ToggleGroup from '$lib/components/ui/toggle-group/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Input } from '$lib/components/ui/input/index.js'
   import { Label } from '$lib/components/ui/label/index.js'
+  import Receipt from '@lucide/svelte/icons/receipt'
   import PageHeader from '../components/PageHeader.svelte'
   import FundDialog from '../components/FundDialog.svelte'
-  import { api, newKey } from '../lib/api.js'
+  import { api } from '../lib/api.js'
+  import { loadIntent, startIntent, endIntent, sendIdempotent, unknownOutcome } from '../lib/intent.js'
   import { route, go } from '../lib/router.svelte.js'
   import { formatMoney } from '../lib/money.js'
   import { toast } from '../lib/toast.js'
@@ -20,7 +21,8 @@
   let qty = $state('10')
 
   let quote = $state(null)
-  let quoteKey = '' // one idempotency key per quote shown
+  // An order placed before a reload that never got a definite answer.
+  let pending = $state(loadIntent('order'))
   let now = $state(Date.now())
   let busy = $state(false)
   let error = $state(null)
@@ -49,7 +51,6 @@
     error = null
     try {
       quote = await api.quote(symbol, side, Number(qty))
-      quoteKey = newKey()
     } catch (err) {
       error = err
     } finally {
@@ -57,31 +58,78 @@
     }
   }
 
-  async function confirm() {
+  // place sends an order intent, retrying with the same key while the
+  // outcome is unknown. A definite answer ends the intent; an unknown one
+  // keeps it (in sessionStorage) so a later retry or a reload is still safe.
+  async function place(intent) {
     busy = true
     error = null
     try {
-      const order = await api.placeOrder(quote.id, quoteKey)
+      const order = await sendIdempotent(() => api.placeOrder(intent.quoteId, intent.key))
+      endIntent('order')
+      pending = null
       toast('Order placed', `${order.side} ${order.qty} ${order.symbol} is being sent to the broker.`, 'success')
       go(`#/orders/${order.id}`)
     } catch (err) {
-      error = err
+      if (unknownOutcome(err)) {
+        error = { code: 'unknown', message: err.message }
+      } else {
+        endIntent('order')
+        pending = null
+        error = err
+      }
     } finally {
       busy = false
     }
+  }
+
+  function confirm() {
+    // One key per quote: confirming the same quote again reuses it.
+    let intent = loadIntent('order')
+    if (!intent || intent.quoteId !== quote.id) {
+      intent = startIntent('order', { quoteId: quote.id, side: quote.side, qty: quote.qty, symbol: quote.symbol })
+    }
+    place(intent)
+  }
+
+  function discardPending() {
+    endIntent('order')
+    pending = null
   }
 </script>
 
 <PageHeader eyebrow="Trade" title="New order" description="Get a guaranteed quote, then confirm before it expires." />
 
+{#if pending && !busy}
+  <div class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+    <div>
+      <strong>An order didn't get a confirmation:</strong> {pending.side} {pending.qty} {pending.symbol}.
+      Resuming is safe: it uses the same idempotency key, so it can't place a second order.
+    </div>
+    <div class="flex gap-2">
+      <Button size="sm" onclick={() => place(pending)}>Resume</Button>
+      <Button size="sm" variant="outline" onclick={discardPending}>Discard</Button>
+    </div>
+  </div>
+{/if}
+
 <div class="grid gap-6 lg:grid-cols-[3fr_2fr]">
   <Card.Root class="shadow-none">
     <Card.Content>
       <form onsubmit={getQuote} class="grid gap-5">
-        <ToggleGroup.Root type="single" variant="outline" bind:value={side} class="w-fit">
-          <ToggleGroup.Item value="BUY" class="px-6 font-semibold data-[state=on]:bg-[#d1fae5] data-[state=on]:text-gain">Buy</ToggleGroup.Item>
-          <ToggleGroup.Item value="SELL" class="px-6 font-semibold data-[state=on]:bg-[#fee2e2] data-[state=on]:text-loss">Sell</ToggleGroup.Item>
-        </ToggleGroup.Root>
+        <div class="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1" role="radiogroup" aria-label="Side">
+          {#each [['BUY', 'Buy'], ['SELL', 'Sell']] as [value, label]}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={side === value}
+              onclick={() => (side = value)}
+              class="rounded-lg py-2.5 text-sm font-semibold transition-all
+                {side === value
+                  ? `bg-card shadow-sm ring-1 ring-border ${value === 'BUY' ? 'text-gain' : 'text-loss'}`
+                  : 'text-muted-foreground hover:text-foreground'}">{label}</button>
+          {/each}
+        </div>
 
         <div class="grid gap-2">
           <Label>Symbol</Label>
@@ -101,7 +149,7 @@
 
         <div class="grid gap-2">
           <Label for="qty">Quantity (shares)</Label>
-          <Input id="qty" class="num h-11" type="number" min="1" max="1000000" step="1" bind:value={qty} required />
+          <Input id="qty" class="h-11" type="number" min="1" max="1000000" step="1" inputmode="numeric" bind:value={qty} required />
         </div>
 
         {#if price}
@@ -120,7 +168,10 @@
     <Card.Header><Card.Title>Quote</Card.Title></Card.Header>
     <Card.Content class="grid gap-3">
       {#if !quote}
-        <p class="py-6 text-center text-sm text-muted-foreground">Choose a symbol and quantity, then get a quote. It is valid for a few seconds.</p>
+        <div class="flex flex-col items-center gap-3 py-10 text-center">
+          <span class="grid size-11 place-items-center rounded-full bg-accent text-primary"><Receipt class="size-5" /></span>
+          <p class="max-w-64 text-sm text-muted-foreground">Choose a symbol and quantity, then get a quote. It's guaranteed for a few seconds.</p>
+        </div>
       {:else}
         {#each [['Order', `${quote.side} ${quote.qty} ${quote.symbol}`], ['Price per share', formatMoney(quote.price)], ['Fee', formatMoney(quote.fee)]] as [k, v]}
           <div class="flex justify-between border-b pb-2.5 text-sm"><span class="text-muted-foreground">{k}</span><span class="num font-semibold">{v}</span></div>
@@ -146,6 +197,10 @@
             You don't hold enough {symbol} shares to sell.
           {:else if error.code === 'quote_expired'}
             Quote expired, get a new one.
+          {:else if error.code === 'unknown'}
+            We couldn't confirm the order ({error.message}). Confirming again is safe: it reuses the same key, so it won't place a second order.
+          {:else if error.code === 'rate_limited'}
+            {error.message}
           {:else}
             {error.message}
           {/if}

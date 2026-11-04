@@ -3,15 +3,16 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import { Input } from '$lib/components/ui/input/index.js'
   import { Label } from '$lib/components/ui/label/index.js'
-  import { api, newKey } from '../lib/api.js'
+  import { api } from '../lib/api.js'
+  import { loadIntent, startIntent, endIntent, sendIdempotent, unknownOutcome } from '../lib/intent.js'
   import { formatMoney, parseDollars } from '../lib/money.js'
   import { toast } from '../lib/toast.js'
 
   let { open = $bindable(false), ondone } = $props()
 
-  // One idempotency key each time the dialog opens: a double click or a
-  // retried request funds once.
-  let key = $state(newKey())
+  // A top-up whose answer was lost (timeout, reload) stays pending in
+  // sessionStorage with its key; reopening the dialog resumes it safely.
+  let pending = $state(null)
   let text = $state('1,000')
   let busy = $state(false)
   let error = $state('')
@@ -19,7 +20,8 @@
 
   $effect(() => {
     if (open) {
-      key = newKey()
+      pending = loadIntent('fund')
+      if (pending) text = formatMoney(pending.amount)
       error = ''
     }
   })
@@ -29,13 +31,25 @@
     if (!cents) { error = 'Enter an amount like 1,000 or 250.50'; return }
     busy = true
     error = ''
+    // Same amount as the pending top-up: same intent, same key. A different
+    // amount is a new intent (reusing the key would be refused anyway).
+    const intent = pending && pending.amount === cents ? pending : startIntent('fund', { amount: cents })
     try {
-      const res = await api.fund(cents, key)
+      const res = await sendIdempotent(() => api.fund(cents, intent.key))
+      endIntent('fund')
+      pending = null
       toast('Account funded', `${formatMoney(res.amount)} added. Available ${formatMoney(res.cash.available)}.`, 'success')
       ondone?.()
       open = false
     } catch (err) {
-      error = err.message
+      if (unknownOutcome(err)) {
+        pending = intent
+        error = `We couldn't confirm the top-up (${err.message}). Trying again is safe: it won't add the money twice.`
+      } else {
+        endIntent('fund')
+        pending = null
+        error = err.message
+      }
     } finally {
       busy = false
     }
@@ -59,6 +73,11 @@
           {/each}
         </div>
       </div>
+      {#if pending && !error}
+        <p class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          Your last top-up of {formatMoney(pending.amount)} didn't get a confirmation. Submitting it again is safe: it reuses the same key.
+        </p>
+      {/if}
       {#if error}<p class="text-sm text-destructive">{error}</p>{/if}
       <Dialog.Footer>
         <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>

@@ -1,0 +1,75 @@
+# Alert rules for the trade app. Each one says what broke, why it matters,
+# and where to look first. Firing alerts show in vmalert (localhost:8880);
+# in production, -notifier.url would point at Alertmanager (Slack, PagerDuty).
+groups:
+  - name: tradeapp
+    interval: 15s
+    rules:
+      - alert: TradeAPIDown
+        expr: up{job="tradeapp-api"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "The trade API is not answering /metrics"
+          description: "Users can't trade and webhooks from the broker are failing (brokersim will retry them)."
+
+      - alert: JobsDeadLettered
+        expr: jobs_dead > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $value }} job(s) in the dead-letter queue"
+          description: "An order submit, cancel or webhook gave up after its retry budget. Check the job's last_error in Operations, fix the cause, then Retry."
+
+      - alert: JobQueueLagging
+        expr: jobs_oldest_waiting_seconds > 300
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "The oldest job has waited {{ $value | humanizeDuration }}"
+          description: "Workers are behind or stuck: orders reach the broker late. Check worker logs and the provider circuit."
+
+      - alert: ProviderCircuitOpen
+        expr: provider_circuit_state{state="open"} == 1
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Calls to the broker are paused (circuit open)"
+          description: "Repeated broker failures. Orders queue up and are sent when it recovers; nothing is lost. Check brokersim."
+
+      - alert: HighServerErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of API requests fail with 5xx"
+          description: "Search VictoriaLogs for level:ERROR and follow the request_id."
+
+      - alert: WebhookSignatureFailures
+        expr: sum(increase(webhooks_received_total{outcome=~"rejected_.*"}[5m])) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} webhooks refused in 5 minutes"
+          description: "Forged, replayed or stale webhooks, or the webhook secret is out of sync with the broker. See the Webhooks page."
+
+      - alert: ReconciliationMismatches
+        expr: recon_mismatches > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Reconciliation found {{ $value }} mismatch(es) with the broker"
+          description: "Our books and the broker disagree. Open Operations → Reconciliation; each mismatch needs a human."
+
+      - alert: LedgerInvariantBroken
+        expr: recon_invariants_ok == 0
+        labels: { severity: critical }
+        annotations:
+          summary: "A ledger invariant does not hold"
+          description: "The books don't add up. Stop and investigate: GET /api/admin/invariants."
+
+      - alert: ReconciliationNotRunning
+        expr: time() - recon_last_run_timestamp_seconds > 900
+        labels: { severity: warning }
+        annotations:
+          summary: "No reconciliation run for over 15 minutes"
+          description: "The worker's reconciliation loop is failing or stopped. Check worker logs."

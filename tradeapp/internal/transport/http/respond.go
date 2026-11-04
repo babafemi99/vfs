@@ -31,7 +31,7 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 }
 
 // writeErr maps domain errors to HTTP responses; anything else is a 500.
-func (s *Server) writeErr(w http.ResponseWriter, r *http.Request, err error) {
+func (s *API) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, domain.ErrInvalidArgument), errors.Is(err, domain.ErrInvalidAmount):
 		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
@@ -47,13 +47,19 @@ func (s *Server) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusConflict, "quote_already_used", "an order was already placed from this quote")
 	case errors.Is(err, domain.ErrOrderFinal):
 		writeError(w, http.StatusConflict, "order_final", err.Error())
+	case errors.Is(err, domain.ErrUnauthenticated):
+		writeError(w, http.StatusUnauthorized, "unauthenticated", err.Error())
+	case errors.Is(err, domain.ErrIdempotencyConflict):
+		writeError(w, http.StatusUnprocessableEntity, "idempotency_conflict", err.Error())
+	case errors.Is(err, domain.ErrRequestInProgress):
+		writeError(w, http.StatusConflict, "request_in_progress", err.Error())
 	case errors.Is(err, domain.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, domain.ErrProviderUnavailable):
-		s.log.Warn("provider unavailable", "method", r.Method, "path", r.URL.Path, "err", err)
+		s.Dependency.Logger.WarnContext(r.Context(), "provider unavailable", "method", r.Method, "path", r.URL.Path, "err", err)
 		writeError(w, http.StatusBadGateway, "provider_unavailable", "the broker is unavailable, try again")
 	default:
-		s.log.Error("request failed", "method", r.Method, "path", r.URL.Path, "err", err)
+		s.Dependency.Logger.ErrorContext(r.Context(), "request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal error")
 	}
 }

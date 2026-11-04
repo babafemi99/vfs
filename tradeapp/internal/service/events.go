@@ -41,17 +41,17 @@ func (s *Service) ReceiveProviderEvent(ctx context.Context, body []byte) (duplic
 		}
 
 		queued = true
-		return s.jobRepo.CreateJob(ctx, tx, s.newJob(domain.JobProcessEvent, nil, &event.EventID))
+		return s.jobRepo.CreateJob(ctx, tx, s.newJob(ctx, domain.JobProcessEvent, nil, &event.EventID))
 	})
 	if err != nil {
 		return false, err
 	}
 
 	if !queued {
-		s.log.Info("webhook duplicate ignored", "event_id", payload.ID, "type", payload.Type)
+		s.log.InfoContext(ctx, "webhook duplicate ignored", "event_id", payload.ID, "type", payload.Type)
 		return true, nil
 	}
-	s.log.Info("webhook stored", "event_id", payload.ID, "type", payload.Type)
+	s.log.InfoContext(ctx, "webhook stored", "event_id", payload.ID, "type", payload.Type)
 	s.notifyJobsReady()
 	return false, nil
 }
@@ -81,7 +81,7 @@ func (s *Service) processEvent(ctx context.Context, eventID string) error {
 
 		order, err := s.findOrderForUpdate(ctx, tx, *snap)
 		if errors.Is(err, domain.ErrNotFound) {
-			s.log.Warn("event for an unknown order", "event_id", eventID, "type", payload.Type,
+			s.log.WarnContext(ctx, "event for an unknown order", "event_id", eventID, "type", payload.Type,
 				"provider_order_id", snap.ID, "client_order_id", snap.ClientOrderID)
 			return s.markEventProcessed(ctx, tx, eventID, "unknown_order")
 		}
@@ -103,7 +103,7 @@ func (s *Service) processEvent(ctx context.Context, eventID string) error {
 		if f := payload.Data.Fill; f != nil {
 			attrs = append(attrs, "fill_id", f.ID, "fill_qty", f.Qty, "fill_price", f.Price)
 		}
-		s.log.Info("event applied", attrs...)
+		s.log.InfoContext(ctx, "event applied", attrs...)
 		return s.markEventProcessed(ctx, tx, eventID, "")
 	})
 }
