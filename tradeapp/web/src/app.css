@@ -1,0 +1,123 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* shadcn-svelte theme, mapped to the 2Remit brand foundation:
+   Global Blue for actions, purple only as an accent, Deep Navy text,
+   Cloud White background, borders over shadows, 8/12/16px radii. */
+:root {
+  --radius: 0.75rem;
+  --background: #fafbff;
+  --foreground: #102a43;
+  --card: #ffffff;
+  --card-foreground: #102a43;
+  --popover: #ffffff;
+  --popover-foreground: #102a43;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #f5f7fc;
+  --secondary-foreground: #102a43;
+  --muted: #f5f7fc;
+  --muted-foreground: #627d98;
+  --accent: #eef2ff;
+  --accent-foreground: #102a43;
+  --destructive: #b91c1c;
+  --border: #e5eaf2;
+  --input: #e5eaf2;
+  --ring: #2563eb;
+
+  --purple: #6d4aff;
+  --gain: #047857;
+  --loss: #b91c1c;
+}
+
+@theme inline {
+  --font-sans: 'Manrope Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-brand-purple: var(--purple);
+  --color-gain: var(--gain);
+  --color-loss: var(--loss);
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 600px at 0% 0%, #eef2ff 0%, transparent 60%),
+      radial-gradient(1000px 500px at 100% 100%, #f3f0ff 0%, transparent 60%),
+      var(--background);
+  }
+  .num { font-variant-numeric: tabular-nums; }
+}
+
+/* ---- the console shell ---- */
+.shell { max-width: 1120px; margin: 32px auto; background: var(--card); border: 1px solid var(--border); border-radius: 24px; box-shadow: 0 8px 24px rgba(16, 42, 67, 0.08); overflow: hidden; }
+.topbar-line { border-bottom: 2px solid transparent; border-image: linear-gradient(90deg, #2563eb, #6d4aff) 1; }
+.eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--primary); }
+.live-dot { width: 8px; height: 8px; border-radius: 9999px; background: #94a3b8; display: inline-block; }
+.live-dot.on { background: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18); }
+
+/* ---- status tones (never colour alone: always with a label) ---- */
+.tone-pending { color: #92400e; background: #fef3c7; }
+.tone-processing { color: #1d4ed8; background: #dbeafe; }
+.tone-completed { color: #047857; background: #d1fae5; }
+.tone-failed { color: #b91c1c; background: #fee2e2; }
+.tone-cancelled { color: #475569; background: #e2e8f0; }
+
+/* ---- step tracker ---- */
+.steps { display: flex; align-items: flex-start; }
+.step { flex: 0 0 auto; display: grid; justify-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--muted-foreground); width: 120px; text-align: center; }
+.step .dot { width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--border); display: grid; place-items: center; background: var(--card); font-size: 14px; }
+.step.done { color: var(--primary); }
+.step.done .dot { border-color: var(--primary); background: var(--primary); color: white; }
+.step.now { color: var(--foreground); }
+.step.now .dot { border-color: var(--primary); color: var(--primary); }
+.step.bad { color: var(--destructive); }
+.step.bad .dot { border-color: var(--destructive); background: var(--destructive); color: white; }
+.step-line { flex: 1; height: 2px; background: var(--border); margin-top: 16px; }
+.step-line.done { background: var(--primary); }
+
+/* ---- activity timeline ---- */
+.timeline { list-style: none; margin: 0; padding: 0; }
+.timeline li { position: relative; padding: 0 0 16px 26px; }
+.timeline li::before { content: ''; position: absolute; left: 6px; top: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--primary); }
+.timeline li::after { content: ''; position: absolute; left: 10px; top: 20px; bottom: 0; width: 1px; background: var(--border); }
+.timeline li:last-child::after { display: none; }
+
+/* ---- webhook terminal ---- */
+.terminal { background: #0b1220; color: #cbd5e1; border-radius: 16px; border: 1px solid #1e293b; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.7; }
+.terminal-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid #1e293b; color: #94a3b8; font-size: 12px; }
+.terminal-bar .dots span { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.term-line { display: grid; grid-template-columns: 84px 150px 1fr; gap: 12px; padding: 1px 14px; cursor: pointer; white-space: nowrap; }
+.term-line:hover, .term-line.selected { background: #172033; }
+.term-line .t { color: #64748b; }
+.t-accepted { color: #34d399; }
+.t-duplicate { color: #93c5fd; }
+.t-refused { color: #f87171; }
+.t-error { color: #fbbf24; }
+.term-line .what { overflow: hidden; text-overflow: ellipsis; }
+.term-line .dim { color: #64748b; }
+.json { background: #0b1220; color: #e2e8f0; border-radius: 12px; padding: 14px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow: auto; white-space: pre; }

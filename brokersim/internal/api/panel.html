@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Brokersim · Provider console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --blue:#2563eb; --purple:#6d4aff; --navy:#102a43; --cloud:#fafbff; --surface:#fff;
+    --border:#e5eaf2; --muted:#627d98; --subtle:#f5f7fc; --tint:#eef2ff;
+    font-family: Manrope, system-ui, sans-serif; color: var(--navy);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(1000px 500px at 0 0, #eef2ff, transparent 60%), var(--cloud); }
+  .shell { max-width: 1180px; margin: 28px auto; background: var(--surface); border: 1px solid var(--border); border-radius: 24px; box-shadow: 0 8px 24px rgba(16,42,67,.08); overflow: hidden; }
+  .top { display: flex; justify-content: space-between; align-items: center; padding: 18px 28px; border-bottom: 2px solid transparent; border-image: linear-gradient(90deg, var(--purple), var(--blue)) 1; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; }
+  .mark { width: 30px; height: 30px; border-radius: 9px; background: var(--navy); color: #fff; display: grid; place-items: center; font-size: 15px; }
+  .pill { background: var(--tint); color: var(--purple); font-weight: 600; font-size: 12px; padding: 3px 10px; border-radius: 999px; }
+  .page { padding: 28px; }
+  .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--purple); margin: 0 0 6px; }
+  h1 { font-size: 28px; margin: 0; } h2 { font-size: 18px; margin: 0; }
+  .sub { color: var(--muted); margin: 6px 0 0; }
+  .note { border-left: 3px solid var(--purple); background: var(--subtle); padding: 12px 16px; border-radius: 0 12px 12px 0; color: var(--muted); font-size: 14px; margin: 20px 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 8px; }
+  .toggle { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 12px; padding: 8px 14px; font-weight: 600; font-size: 14px; cursor: pointer; background: var(--surface); }
+  .toggle input { accent-color: var(--blue); width: 16px; height: 16px; }
+  .section { margin-top: 28px; }
+  .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .card { border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+  .card.scroll { max-height: 520px; overflow-y: auto; }
+  .card.scroll th { position: sticky; top: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 10px 14px; background: var(--subtle); border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  .mono { font-size: 12.5px; }
+  .muted { color: var(--muted); }
+  .empty { text-align: center; padding: 28px; color: var(--muted); font-size: 14px; }
+  .btn { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); font: inherit; font-size: 12.5px; font-weight: 600; color: var(--navy); cursor: pointer; }
+  .btn:hover { background: var(--subtle); }
+  .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .btn.danger { color: #b91c1c; border-color: #fecaca; background: #fff5f5; }
+  .btn.big { height: 38px; padding: 0 14px; font-size: 14px; border-radius: 12px; }
+  .acts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .status { display: inline-block; padding: 3px 9px; border-radius: 8px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .s-OPEN, .s-PARTIALLY_FILLED, .s-PENDING_CANCEL, .s-pending { color: #1d4ed8; background: #dbeafe; }
+  .s-FILLED, .s-delivered { color: #047857; background: #d1fae5; }
+  .s-REJECTED, .s-failed { color: #b91c1c; background: #fee2e2; }
+  .s-CANCELLED, .s-EXPIRED { color: #475569; background: #e2e8f0; }
+  .buy { color: #047857; font-weight: 700; font-size: 12px; } .sell { color: #b91c1c; font-weight: 700; font-size: 12px; }
+  .bar { height: 5px; background: var(--border); border-radius: 9px; overflow: hidden; width: 90px; margin-top: 4px; }
+  .bar div { height: 100%; background: var(--blue); }
+  .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .toast { position: fixed; top: 18px; right: 18px; background: #f0fdf7; border: 1px solid #a7f3d0; border-left: 4px solid #10b981; border-radius: 12px; padding: 12px 16px; font-size: 14px; box-shadow: 0 8px 24px rgba(16,42,67,.12); display: none; max-width: 360px; }
+  .toast.err { background: #fff5f5; border-color: #fecaca; border-left-color: #b91c1c; }
+  .foot { display: flex; justify-content: center; gap: 28px; padding: 14px; border-top: 1px solid var(--border); background: var(--subtle); color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="top">
+    <div class="brand"><div class="mark">B</div>Brokersim</div>
+    <div style="display:flex;gap:10px;align-items:center;font-size:14px">Provider <span class="pill">Simulator</span></div>
+  </div>
+
+  <div class="page">
+    <p class="eyebrow">Provider console</p>
+    <h1>The broker's side</h1>
+    <p class="sub">Everything the broker knows, and the levers its engine would pull.</p>
+
+    <div class="note">Every action here goes through the broker's real state machine and sends the same signed webhook the engine would. The trade app only learns about it from that webhook (or its sweeper).</div>
+
+    <div class="controls">
+      <label class="toggle"><input type="checkbox" id="auto_fill" /> Auto-fill orders</label>
+      <label class="toggle"><input type="checkbox" id="auto_resolve_cancels" /> Auto-resolve cancels</label>
+      <label class="toggle"><input type="checkbox" id="market_open" /> Market open</label>
+      <span style="flex:1"></span>
+      <button class="btn big danger" id="reset">Reset broker</button>
+    </div>
+
+    <div class="section">
+      <div class="head"><h2>Orders</h2><span class="muted" style="font-size:13px" id="ocount"></span></div>
+      <div class="card"><table>
+        <thead><tr><th>Order</th><th>Client order id</th><th>Status</th><th>Filled</th><th>Version</th><th>Actions</th></tr></thead>
+        <tbody id="orders"><tr><td colspan="6" class="empty">Loading…</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <div class="grid section">
+      <div>
+        <div class="head"><h2>Webhook deliveries</h2><span class="muted" style="font-size:13px">Latest 50</span></div>
+        <div class="card scroll"><table>
+          <thead><tr><th>Event</th><th>Type</th><th>State</th><th>Attempts</th><th>Last</th><th></th></tr></thead>
+          <tbody id="deliveries"></tbody>
+        </table></div>
+      </div>
+      <div>
+        <div class="head"><h2>Market</h2><span class="muted" style="font-size:13px">Bid / ask</span></div>
+        <div class="card"><table>
+          <thead><tr><th>Symbol</th><th style="text-align:right">Bid</th><th style="text-align:right">Ask</th></tr></thead>
+          <tbody id="prices"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+  <div class="foot"><span>Signed webhooks</span><span>Versioned snapshots</span><span>Idempotent accepts</span></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+const money = (c) => '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]))
+const short = (s) => (s && s.length > 22 ? s.slice(0, 12) + '…' + s.slice(-6) : s || '—')
+
+let toastTimer
+function toast(msg, bad) {
+  const t = $('toast')
+  t.textContent = msg
+  t.className = 'toast' + (bad ? ' err' : '')
+  t.style.display = 'block'
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => (t.style.display = 'none'), 3500)
+}
+
+async function call(method, path, body) {
+  const res = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error?.message || res.statusText)
+  return data
+}
+
+async function act(method, path, body, label) {
+  try {
+    await call(method, path, body)
+    toast(label + ' ✓ webhook sent')
+    refresh()
+  } catch (e) {
+    toast(label + ' failed: ' + e.message, true)
+  }
+}
+
+function actions(o) {
+  const id = encodeURIComponent(o.id)
+  const b = (label, path, body, cls = '') => `<button class="btn ${cls}" data-m="POST" data-p="/dev/orders/${id}/${path}" data-b='${body ? JSON.stringify(body) : ''}' data-l="${label}">${label}</button>`
+  const out = []
+  if (['OPEN', 'PARTIALLY_FILLED', 'PENDING_CANCEL'].includes(o.status)) {
+    out.push(b('Fill 1', 'fill', { qty: 1 }), b('Fill all', 'fill', null, 'primary'))
+  }
+  if (o.status === 'OPEN') out.push(b('Reject', 'reject', null, 'danger'))
+  if (['OPEN', 'PARTIALLY_FILLED'].includes(o.status)) out.push(b('Expire', 'expire'), b('Cancel', 'cancel'))
+  if (o.status === 'PENDING_CANCEL') out.push(b('Confirm cancel', 'cancel/confirm', null, 'primary'), b('Reject cancel', 'cancel/reject', null, 'danger'))
+  return out.length ? `<div class="acts">${out.join('')}</div>` : '<span class="muted">Final</span>'
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-p]')
+  if (!btn) return
+  act(btn.dataset.m, btn.dataset.p, btn.dataset.b ? JSON.parse(btn.dataset.b) : undefined, btn.dataset.l)
+})
+
+async function refresh() {
+  try {
+    const [orders, deliveries, prices, engine] = await Promise.all([
+      call('GET', '/dev/orders'), call('GET', '/dev/deliveries?limit=50'), call('GET', '/dev/prices'), call('GET', '/dev/engine'),
+    ])
+    const os = orders.orders || []
+    $('ocount').textContent = os.length + ' order(s)'
+    $('orders').innerHTML = os.length ? os.map((o) => `
+      <tr>
+        <td><span class="${o.side === 'BUY' ? 'buy' : 'sell'}">${o.side}</span> <strong>${o.qty} ${esc(o.symbol)}</strong> <span class="muted">@ ${money(o.price)}</span><div class="mono muted">${esc(o.id)}</div></td>
+        <td class="mono" title="${esc(o.client_order_id)}">${esc(short(o.client_order_id))}</td>
+        <td><span class="status s-${o.status}">${o.status.replace('_', ' ').toLowerCase()}</span>${o.reason ? `<div class="muted mono">${esc(o.reason)}</div>` : ''}</td>
+        <td>${o.filled_qty} / ${o.qty}<div class="bar"><div style="width:${(o.filled_qty / o.qty) * 100}%"></div></div></td>
+        <td>v${o.version}</td>
+        <td>${actions(o)}</td>
+      </tr>`).join('') : '<tr><td colspan="6" class="empty">No orders yet. Place one in the trade console.</td></tr>'
+
+    const ds = deliveries.deliveries || []
+    $('deliveries').innerHTML = ds.length ? ds.map((d) => `
+      <tr>
+        <td class="mono" title="${esc(d.event_id)}">${esc(short(d.event_id))}</td>
+        <td class="mono">${esc(d.type)}</td>
+        <td><span class="status s-${d.state}">${d.state}</span></td>
+        <td>${d.attempts}</td>
+        <td class="mono muted">${d.last_status_code || ''} ${esc(d.last_error || '')}</td>
+        <td>${d.state === 'pending' ? '' : `<button class="btn" data-m="POST" data-p="/dev/deliveries/${encodeURIComponent(d.event_id)}/redeliver" data-b="" data-l="Redeliver">Redeliver</button>`}</td>
+      </tr>`).join('') : '<tr><td colspan="6" class="empty">No webhooks sent yet.</td></tr>'
+
+    $('prices').innerHTML = (prices.prices || []).map((p) => `<tr><td><strong>${esc(p.symbol)}</strong></td><td style="text-align:right">${money(p.bid)}</td><td style="text-align:right">${money(p.ask)}</td></tr>`).join('')
+
+    for (const k of ['auto_fill', 'auto_resolve_cancels', 'market_open']) {
+      if (document.activeElement !== $(k)) $(k).checked = engine[k]
+    }
+  } catch (e) {
+    $('orders').innerHTML = `<tr><td colspan="6" class="empty">Cannot reach the broker: ${esc(e.message)}</td></tr>`
+  }
+}
+
+for (const k of ['auto_fill', 'auto_resolve_cancels', 'market_open']) {
+  $(k).addEventListener('change', (e) => act('PUT', '/dev/engine', { [k]: e.target.checked }, k.replaceAll('_', ' ')))
+}
+$('reset').addEventListener('click', () => {
+  if (confirm('Clear every quote, order and delivery at the broker?')) act('POST', '/dev/reset', null, 'Reset')
+})
+
+refresh()
+setInterval(refresh, 1000)
+</script>
+</body>
+</html>
