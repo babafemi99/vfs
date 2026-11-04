@@ -6,7 +6,7 @@
 #                 brokersim forgets everything when it stops)
 #   AUTO=1        let brokersim's engine fill orders and resolve cancels by
 #                 itself (default: manual, you drive it from the provider
-#                 console at http://localhost:8090/dev)
+#                 console at http://localhost:5173/#/provider)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,9 +48,9 @@ mkdir -p "$BIN"
 say "· building brokersim and the API"
 (cd "$ROOT/brokersim" && go build -o "$BIN/brokersim" ./cmd/brokersim)
 (cd "$ROOT/tradeapp" && go build -o "$BIN/tradeapi" ./cmd/api)
-if [[ ! -d "$ROOT/tradeapp/web/node_modules" ]]; then
+if [[ ! -d "$ROOT/web/node_modules" ]]; then
   say "· installing web dependencies"
-  (cd "$ROOT/tradeapp/web" && npm install --no-audit --no-fund --silent)
+  (cd "$ROOT/web" && npm install --no-audit --no-fund --silent)
 fi
 
 # ---- start ----------------------------------------------------------------
@@ -90,14 +90,14 @@ API_ADDR=":$API_PORT" PROVIDER_URL="http://localhost:$SIM_PORT" \
   "$BIN/tradeapi" > >(prefix "[api]" "34") 2>&1 &
 echo $! >> "$PIDS"
 
-(cd "$ROOT/tradeapp/web" && exec node node_modules/vite/bin/vite.js --port "$WEB_PORT" --strictPort) \
+(cd "$ROOT/web" && exec node node_modules/vite/bin/vite.js --port "$WEB_PORT" --strictPort) \
   > >(prefix "[web]" "32") 2>&1 &
 echo $! >> "$PIDS"
 
 # ---- wait until healthy ---------------------------------------------------
 for _ in $(seq 120); do
   if curl -sf "http://localhost:$API_PORT/healthz" >/dev/null \
-    && curl -sf "http://localhost:$SIM_PORT/dev" >/dev/null \
+    && curl -sf "http://localhost:$SIM_PORT/dev/engine" >/dev/null \
     && curl -sf "http://localhost:$WEB_PORT" >/dev/null; then
     # Cancels have no env setting: set the engine switch through the dev API.
     if [[ "${AUTO:-0}" != "1" ]]; then
@@ -108,7 +108,7 @@ for _ in $(seq 120); do
     say "✓ up"
     echo "  Broker mode       $MODE"
     echo "  Trade console     http://localhost:$WEB_PORT"
-    echo "  Provider console  http://localhost:$SIM_PORT/dev"
+    echo "  Provider console  http://localhost:$WEB_PORT/#/provider"
     echo "  API               http://localhost:$API_PORT   (health: /healthz)"
     echo "  Ctrl-C to stop everything"
     echo

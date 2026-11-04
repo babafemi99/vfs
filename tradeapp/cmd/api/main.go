@@ -69,8 +69,10 @@ func run(log *slog.Logger) error {
 		Logger:         log,
 	})
 	api := httpapi.New(svc, repo, httpapi.Config{
-		WebhookSecret:    cfg.WebhookSecret,
-		WebhookTolerance: cfg.WebhookTolerance,
+		WebhookSecret:      cfg.WebhookSecret,
+		WebhookTolerance:   cfg.WebhookTolerance,
+		RateLimitPerMinute: cfg.RateLimitPerMinute,
+		RateLimitBurst:     cfg.RateLimitBurst,
 	}, log)
 
 	go worker.New(svc, log, cfg.WorkerPoll, cfg.SweepInterval, cfg.ReconInterval).Run(ctx)

@@ -11,9 +11,10 @@
   import OrderDetail from './pages/OrderDetail.svelte'
   import Operations from './pages/Operations.svelte'
   import Webhooks from './pages/Webhooks.svelte'
+  import Provider from './pages/Provider.svelte'
 
   // Brokersim serves its own console; it opens in a new tab.
-  const providerConsole = import.meta.env.VITE_PROVIDER_CONSOLE_URL || 'http://localhost:8090/dev'
+  const providerConsole = import.meta.env.VITE_PROVIDER_CONSOLE_URL || '/#/provider'
 
   connect()
 
@@ -75,6 +76,8 @@
       <Orders />
     {:else if route.page === 'webhooks'}
       <Webhooks />
+    {:else if route.page === 'provider'}
+      <Provider />
     {:else if route.page === 'ops'}
       <Operations {providerConsole} />
     {:else}

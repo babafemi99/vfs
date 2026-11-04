@@ -8,14 +8,14 @@ TEST_DATABASE_URL ?= postgres://localhost:5432/tradeapp_test?sslmode=disable
 run:
 	DATABASE_URL=$(DATABASE_URL) go run ./cmd/api
 
-# brokersim on :8090 (provider console at http://localhost:8090/dev). A fresh
+# brokersim on :8090 (its console is in the root web app, /#/provider). A fresh
 # seed each start, because its ids are seeded and it forgets everything on exit.
 sim:
 	cd ../brokersim && SIM_SEED=$$RANDOM$$RANDOM go run ./cmd/brokersim
 
-# The Svelte console on :5173 (proxies /api to :8091).
+# The web app (both consoles) lives at the repo root now: ../web.
 web:
-	cd web && npm install --no-audit --no-fund && npm run dev
+	cd ../web && npm install --no-audit --no-fund && npm run dev
 
 vet:
 	go vet ./...

@@ -12,8 +12,15 @@ import (
 
 	"github.com/babafem99/vfs/tradeapp/internal/dbtest"
 	"github.com/babafem99/vfs/tradeapp/internal/domain"
+	"github.com/babafem99/vfs/tradeapp/internal/provider"
+	"github.com/babafem99/vfs/tradeapp/internal/providertest"
 	"github.com/babafem99/vfs/tradeapp/internal/repository"
 	"github.com/babafem99/vfs/tradeapp/internal/service"
+	httpapi "github.com/babafem99/vfs/tradeapp/internal/transport/http"
+	"io"
+	"log/slog"
+	"net/http/httptest"
+	"time"
 )
 
 // runJobs runs every due job once, standing in for the worker.
@@ -258,5 +265,41 @@ func TestJobStatsAndBulkRetryEndpoints(t *testing.T) {
 	}
 	if stats := e.do(t, "GET", "/api/admin/jobs/stats", "", ""); stats.body["ok"] != true {
 		t.Fatalf("stats after recovery: %s", stats.raw)
+	}
+}
+
+func TestRateLimitOnCreateRoutes(t *testing.T) {
+	repo := repository.New(dbtest.New(t))
+	broker := providertest.New(t)
+	svc := service.New(repo, provider.New(broker.URL, providertest.APIKey, 2*time.Second, nil), service.DefaultConfig())
+	api := httpapi.New(svc, repo, httpapi.Config{RateLimitPerMinute: 1, RateLimitBurst: 2}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv := httptest.NewServer(api.Handler())
+	t.Cleanup(srv.Close)
+	e := env{srv: srv, repo: repo, svc: svc, broker: broker}
+
+	for i := range 2 {
+		if r := e.do(t, "POST", "/api/account/fund", fmt.Sprintf("f%d", i), `{"amount": 100}`); r.status != 200 {
+			t.Fatalf("fund %d: %d", i, r.status)
+		}
+	}
+	req, _ := http.NewRequest("POST", srv.URL+"/api/account/fund", strings.NewReader(`{"amount": 100}`))
+	req.Header.Set("Idempotency-Key", "f-over")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 429 || res.Header.Get("Retry-After") == "" {
+		t.Fatalf("3rd fund: %d Retry-After=%q, want 429 with Retry-After", res.StatusCode, res.Header.Get("Retry-After"))
+	}
+
+	// Other groups have their own budget; reads are never limited.
+	if r := e.do(t, "POST", "/api/quotes", "", `{"symbol":"AAPL","side":"BUY","qty":1}`); r.status != 201 {
+		t.Fatalf("quote after fund limit: %d", r.status)
+	}
+	for range 5 {
+		if r := e.do(t, "GET", "/api/account", "", ""); r.status != 200 {
+			t.Fatalf("read limited: %d", r.status)
+		}
 	}
 }

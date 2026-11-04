@@ -15,7 +15,7 @@ down: ## Stop services started by `make up` that are still running
 test: ## All tests: brokersim and tradeapp (race detector), plus the web build
 	cd brokersim && go vet ./... && go test -race -count=1 ./...
 	cd tradeapp && go vet ./... && go test -race -count=1 ./...
-	cd tradeapp/web && ([ -d node_modules ] || npm install --no-audit --no-fund --silent) && npm run build --silent
+	cd web && ([ -d node_modules ] || npm install --no-audit --no-fund --silent) && npm run build --silent
 
 e2e: ## End to end against the real brokersim (own ports and database)
 	$(MAKE) -C tradeapp e2e

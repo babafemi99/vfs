@@ -35,6 +35,9 @@ type Config struct {
 	StuckAfter       time.Duration // STUCK_AFTER: an active order quiet this long is polled
 	ReconInterval    time.Duration // RECON_INTERVAL: how often to reconcile with the provider
 	ReconLookback    time.Duration // RECON_LOOKBACK: reconcile orders changed within this window
+
+	RateLimitPerMinute int // RATE_LIMIT_PER_MINUTE: per user, per route group (orders, quotes, fund); 0 = off
+	RateLimitBurst     int // RATE_LIMIT_BURST: requests allowed at once before the per-minute rate applies
 }
 
 // Load reads the config from the environment, using defaults for anything unset.
@@ -46,6 +49,13 @@ func Load() (Config, error) {
 			errs = append(errs, fmt.Errorf("%s: must be a positive duration", key))
 		}
 		return d
+	}
+	nonNegative := func(key, def string) int {
+		n, err := strconv.Atoi(env(key, def))
+		if err != nil || n < 0 {
+			errs = append(errs, fmt.Errorf("%s: must be a whole number, 0 or more", key))
+		}
+		return n
 	}
 	integer := func(key, def string) int {
 		n, err := strconv.Atoi(env(key, def))
@@ -81,6 +91,9 @@ func Load() (Config, error) {
 		StuckAfter:       duration("STUCK_AFTER", "30s"),
 		ReconInterval:    duration("RECON_INTERVAL", "5m"),
 		ReconLookback:    duration("RECON_LOOKBACK", "24h"),
+
+		RateLimitPerMinute: nonNegative("RATE_LIMIT_PER_MINUTE", "60"),
+		RateLimitBurst:     nonNegative("RATE_LIMIT_BURST", "10"),
 	}
 	if c.WebhookSecret == "" {
 		errs = append(errs, errors.New("PROVIDER_WEBHOOK_SECRET must not be empty"))

@@ -279,29 +279,21 @@ func TestDevAllStatesReachable(t *testing.T) {
 	}
 }
 
-func TestDevPanelAndPrices(t *testing.T) {
+func TestDevPrices(t *testing.T) {
 	h := newEnv(t).h
-	for _, path := range []string{"/dev", "/dev/"} {
-		req := httptest.NewRequest("GET", path, nil)
-		req.RemoteAddr = "127.0.0.1:1234"
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		if rec.Code != 200 || !strings.Contains(rec.Header().Get("Content-Type"), "text/html") || !strings.Contains(rec.Body.String(), "Provider console") {
-			t.Fatalf("%s: %d %q", path, rec.Code, rec.Header().Get("Content-Type"))
-		}
-	}
-	req := httptest.NewRequest("GET", "/dev", nil)
-	req.RemoteAddr = "10.0.0.5:1234"
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != 403 {
-		t.Fatalf("non-loopback panel: %d", rec.Code)
-	}
-	req = httptest.NewRequest("GET", "/dev/prices", nil)
+	req := httptest.NewRequest("GET", "/dev/prices", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	rec = httptest.NewRecorder()
+	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"prices"`) {
 		t.Fatalf("prices: %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/dev/prices", nil)
+	req.RemoteAddr = "10.0.0.5:1234"
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("non-loopback: %d", rec.Code)
 	}
 }

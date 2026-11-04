@@ -45,7 +45,6 @@ func NewRouter(d Deps) http.Handler {
 	v1.HandleFunc("/", s.notFound)
 
 	dev := http.NewServeMux()
-	dev.HandleFunc("GET /dev/{$}", s.devPanel)
 	dev.HandleFunc("GET /dev/prices", s.devPrices)
 	dev.HandleFunc("GET /dev/orders", s.devListOrders)
 	dev.HandleFunc("POST /dev/orders/{id}/fill", s.devFill)
@@ -64,7 +63,6 @@ func NewRouter(d Deps) http.Handler {
 	root := http.NewServeMux()
 	root.Handle("/v1/", s.requireAPIKey(v1))
 	root.Handle("/dev/", s.loopbackOnly(dev))
-	root.Handle("GET /dev", s.loopbackOnly(http.HandlerFunc(s.devPanel)))
 	root.HandleFunc("/", s.notFound)
 	return s.logRequests(root)
 }

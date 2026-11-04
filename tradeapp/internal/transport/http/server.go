@@ -20,6 +20,11 @@ const DemoUserID = 1
 type Config struct {
 	WebhookSecret    string        // shared with the provider, for webhook signatures
 	WebhookTolerance time.Duration // max webhook timestamp age
+
+	// Per-user rate limits on the routes that create things (0 = off).
+	// Each route group (orders, quotes, fund) has its own budget.
+	RateLimitPerMinute int
+	RateLimitBurst     int
 }
 
 type Server struct {
@@ -29,22 +34,29 @@ type Server struct {
 	webhookRepo repository.WebhookRepo
 	cfg         Config
 	log         *slog.Logger
+
+	ordersLimit, quotesLimit, fundLimit *limiter
 }
 
 func New(svc *service.Service, repo repository.Repository, cfg Config, log *slog.Logger) *Server {
-	return &Server{svc: svc, repo: repo, cfg: cfg, log: log}
+	return &Server{
+		svc: svc, repo: repo, cfg: cfg, log: log,
+		ordersLimit: newLimiter(cfg.RateLimitPerMinute, cfg.RateLimitBurst),
+		quotesLimit: newLimiter(cfg.RateLimitPerMinute, cfg.RateLimitBurst),
+		fundLimit:   newLimiter(cfg.RateLimitPerMinute, cfg.RateLimitBurst),
+	}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /api/account", s.getAccount)
-	mux.HandleFunc("POST /api/account/fund", s.idempotent(s.fundAccount))
+	mux.HandleFunc("POST /api/account/fund", s.rateLimited("fund", s.fundLimit, s.idempotent(s.fundAccount)))
 	mux.HandleFunc("GET /api/activity", s.listActivity)
 	mux.HandleFunc("GET /api/stream", s.stream)
 	mux.HandleFunc("GET /api/prices", s.listPrices)
-	mux.HandleFunc("POST /api/quotes", s.createQuote)
-	mux.HandleFunc("POST /api/orders", s.idempotent(s.placeOrder))
+	mux.HandleFunc("POST /api/quotes", s.rateLimited("quotes", s.quotesLimit, s.createQuote))
+	mux.HandleFunc("POST /api/orders", s.rateLimited("orders", s.ordersLimit, s.idempotent(s.placeOrder)))
 	mux.HandleFunc("GET /api/orders", s.listOrders)
 	mux.HandleFunc("GET /api/orders/{id}", s.getOrder)
 	mux.HandleFunc("GET /api/orders/{id}/compare", s.compareOrder)

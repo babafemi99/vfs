@@ -13,7 +13,7 @@ make up      # builds and starts everything; Ctrl-C stops it all
 | What | Where |
 | --- | --- |
 | Trade console | http://localhost:5173 |
-| Provider console (brokersim) | http://localhost:8090/dev |
+| Provider console (brokersim) | http://localhost:5173/#/provider |
 | Trade API | http://localhost:8091 |
 
 **The broker is manual by default.** Place an order in the trade console, then open the provider console and press *Fill 1*, *Fill all*, *Reject*, *Expire*, or *Confirm cancel* / *Reject cancel*, and watch the trade console update live. `AUTO=1 make up` lets brokersim's engine fill orders and resolve cancels by itself.
